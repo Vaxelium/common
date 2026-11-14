@@ -128,6 +128,41 @@ pub struct UserStatus {
     pub online: bool,
     /// True for the one member who owns this server (the first user to join it).
     pub owner: bool,
+    /// The ids of the roles this member has, in no particular order.
+    #[serde(default)]
+    pub roles: Vec<i64>,
+}
+
+/// Permissions a role can grant, as bits in `RoleInfo::permissions`. The owner has all of them.
+pub mod perm {
+    /// Create, rename, move and delete channels and categories.
+    pub const MANAGE_CHANNELS: u32 = 1 << 0;
+    /// Create, edit, reorder and delete roles below one's own, and give them to members below one.
+    pub const MANAGE_ROLES: u32 = 1 << 1;
+    /// Delete other members' messages.
+    pub const MANAGE_MESSAGES: u32 = 1 << 2;
+    /// Every permission there is.
+    pub const ALL: u32 = MANAGE_CHANNELS | MANAGE_ROLES | MANAGE_MESSAGES;
+}
+
+/// Longest role name, in characters.
+pub const MAX_ROLE_NAME_LEN: usize = 32;
+
+/// The id of the `@everyone` role. Every member has it, it always sits at the bottom of the
+/// hierarchy, and it cannot be deleted, moved or given out. Its colour and permissions apply to all.
+pub const EVERYONE_ROLE: i64 = 0;
+
+/// A role members can be given. Members get the permissions of all their roles together.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoleInfo {
+    pub id: i64,
+    pub name: String,
+    /// `#rrggbb`, or empty for no colour.
+    pub color: String,
+    /// The permissions this role grants (see `perm`).
+    pub permissions: u32,
+    /// Higher means more power. Roles are listed highest first.
+    pub position: i64,
 }
 
 /// Basic syntax check for an email address (not a full RFC 5322 parser).
@@ -202,6 +237,20 @@ pub enum ClientMsg {
     PlaceChannel { channel: i64, category: Option<i64>, before: Option<i64> },
     /// Put a channel in a category, or take it out of its category with `None`.
     MoveChannel { channel: i64, category: Option<i64> },
+    /// Create a role at the bottom of the hierarchy. Needs Manage roles, and can only grant
+    /// permissions the sender has.
+    CreateRole { name: String, color: String, permissions: u32 },
+    /// Change a role's name, colour and permissions. Needs Manage roles, and the role must be below
+    /// the sender's highest role.
+    UpdateRole { role: i64, name: String, color: String, permissions: u32 },
+    /// Delete a role. Members who had it lose it. Same rules as `UpdateRole`.
+    DeleteRole { role: i64 },
+    /// Move a role so it sits just above another one (or at the bottom, with `None`). Same rules as
+    /// `UpdateRole`.
+    MoveRole { role: i64, before: Option<i64> },
+    /// Give a member a role, or take it away with `on` false. Needs Manage roles, and both the role
+    /// and the member's highest role must be below the sender's highest role.
+    SetMemberRole { user: String, role: i64, on: bool },
     /// Server to server: deliver a direct message from the account of `token` to the account `to`,
     /// which this server stores as its own copy. Answered with `ServerMsg::RelayAck`.
     RelayDm { token: String, to: String, text: String },
@@ -304,8 +353,10 @@ pub enum ServerMsg {
     /// The history of a direct message, as asked for with `ClientMsg::FetchDm`.
     DmHistory { channel: String, messages: Vec<ChatMessage> },
     System { channel_id: i64, text: String },
-    /// Every member of this server, online or not (sent to everyone on change).
+    /// Every member of this server, online or not, with their roles (sent to everyone on change).
     Presence { users: Vec<UserStatus> },
+    /// The roles of this server, highest first. Sent on connect and after every change to them.
+    Roles { roles: Vec<RoleInfo> },
     /// A new message arrived in a channel other than the one you are viewing.
     Activity { channel_id: i64 },
     /// Answer to `ClientMsg::RelayDm`. `error` says why the message was not stored.
