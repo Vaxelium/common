@@ -34,6 +34,13 @@ pub enum AuthRequest {
     UpdateProfile { token: String, name: Option<String>, username: Option<String> },
     /// Change the account's email. Needs the session and the current password.
     ChangeEmail { token: String, password: String, new_email: String },
+    /// Find an account by its display name. Used to start a direct message with someone who is not
+    /// on the same server.
+    Lookup { name: String },
+    /// A chat server reports that the account of `token` was connected at `addr`.
+    Seen { token: String, addr: String },
+    /// Ask which servers an account was last seen at, most recent first.
+    Locate { id: String },
 }
 
 /// Replies from the auth service.
@@ -50,6 +57,12 @@ pub enum AuthReply {
     Profile { name: String, username: String, email: Option<String> },
     /// The email was changed to this one.
     EmailChanged { email: String },
+    /// The account with the display name that was looked up.
+    Account { id: String, name: String },
+    /// The servers an account was last seen at, most recent first.
+    Locations { addrs: Vec<String> },
+    /// A sighting was recorded.
+    Recorded,
     Error { text: String },
 }
 
@@ -164,6 +177,9 @@ pub enum ClientMsg {
     /// Public, no login: exchange lists of servers. `known` are servers the sender knows, and
     /// the sender's own address. Answered with `ServerMsg::Peers`.
     Peers { known: Vec<String> },
+    /// Server to server: deliver a direct message from the account of `token` to the account `to`,
+    /// which this server stores as its own copy. Answered with `ServerMsg::RelayAck`.
+    RelayDm { token: String, to: String, text: String },
 }
 
 /// A direct message conversation, as the account that is part of it sees it.
@@ -231,5 +247,7 @@ pub enum ServerMsg {
     Presence { users: Vec<UserStatus> },
     /// A new message arrived in a channel other than the one you are viewing.
     Activity { channel: String },
+    /// Answer to `ClientMsg::RelayDm`. `error` says why the message was not stored.
+    RelayAck { error: Option<String> },
     Error { text: String },
 }
