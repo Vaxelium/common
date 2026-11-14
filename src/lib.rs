@@ -141,8 +141,10 @@ pub mod perm {
     pub const MANAGE_ROLES: u32 = 1 << 1;
     /// Delete other members' messages.
     pub const MANAGE_MESSAGES: u32 = 1 << 2;
+    /// Members with this cannot be ignored or blocked by anyone. The owner always counts as having it.
+    pub const BYPASS_IGNORE: u32 = 1 << 3;
     /// Every permission there is.
-    pub const ALL: u32 = MANAGE_CHANNELS | MANAGE_ROLES | MANAGE_MESSAGES;
+    pub const ALL: u32 = MANAGE_CHANNELS | MANAGE_ROLES | MANAGE_MESSAGES | BYPASS_IGNORE;
 }
 
 /// Longest role name, in characters.
