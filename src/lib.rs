@@ -32,6 +32,10 @@ pub enum AuthRequest {
     Profile { token: String },
     /// Change the name shown in chat, the username, or both. Needs a valid session.
     UpdateProfile { token: String, name: Option<String>, username: Option<String> },
+    /// Ask for a code to confirm the account's email address. The code is emailed to it. Needs a session.
+    RequestEmailCode { token: String },
+    /// Confirm the account's email address with the code that was emailed. Needs a session.
+    VerifyEmail { token: String, code: String },
     /// Change the account's email. Needs the session and the current password.
     ChangeEmail { token: String, password: String, new_email: String },
     /// Find an account by its display name. Used to start a direct message with someone who is not
@@ -57,7 +61,21 @@ pub enum AuthReply {
     Verified { id: String, name: String },
     LoggedOut,
     /// The account's display name, username, and email if one is on record.
-    Profile { name: String, username: String, email: Option<String> },
+    /// `verified` is true once the account has confirmed its email address.
+    Profile {
+        name: String,
+        username: String,
+        email: Option<String>,
+        #[serde(default)]
+        verified: bool,
+        /// True when this server can send email, so an address can be confirmed.
+        #[serde(default)]
+        can_verify: bool,
+    },
+    /// The confirmation code was emailed.
+    CodeSent,
+    /// The email address is confirmed.
+    EmailVerified,
     /// The email was changed to this one.
     EmailChanged { email: String },
     /// The account with the display name that was looked up.
