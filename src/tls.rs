@@ -22,7 +22,7 @@ pub use tokio_rustls::client::TlsStream as AsyncClientStream;
 pub use tokio_rustls::server::TlsStream as AsyncServerStream;
 
 /// The name a certificate is issued for. Clients don't check names; they pin the certificate.
-const CERT_NAME: &str = "disscord";
+const CERT_NAME: &str = "vaxelium";
 
 /// Makes a new self-signed certificate. Returns (certificate PEM, private key PEM).
 pub fn new_identity() -> anyhow::Result<(String, String)> {

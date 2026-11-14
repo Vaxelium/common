@@ -1,4 +1,4 @@
-//! Wire protocol shared by the DissCord server and client.
+//! Wire protocol shared by the Vaxelium server and client.
 //!
 //! Every message is one JSON object per line (newline-delimited JSON) over TCP.
 
