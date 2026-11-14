@@ -41,6 +41,9 @@ pub enum AuthRequest {
     Seen { token: String, addr: String },
     /// Ask which servers an account was last seen at, most recent first.
     Locate { id: String },
+    /// Ask for the new ids of accounts that had their old id (their name) migrated to a random one.
+    /// Used by chat servers to update what they stored under the old ids.
+    Migrations { old_ids: Vec<String> },
 }
 
 /// Replies from the auth service.
@@ -61,6 +64,8 @@ pub enum AuthReply {
     Account { id: String, name: String },
     /// The servers an account was last seen at, most recent first.
     Locations { addrs: Vec<String> },
+    /// The (old id, new id) pairs for the old ids asked about that were migrated.
+    Migrations { pairs: Vec<(String, String)> },
     /// A sighting was recorded.
     Recorded,
     Error { text: String },
@@ -93,6 +98,9 @@ pub struct ChatMessage {
     /// Unique id, given by the server when the message is saved. 0 until then.
     #[serde(default)]
     pub id: i64,
+    /// The channel's permanent id. It does not change when the channel is renamed.
+    #[serde(default)]
+    pub channel_id: i64,
     pub channel: String,
     /// The author's name to show.
     pub author: String,
@@ -177,14 +185,49 @@ pub enum ClientMsg {
     /// Public, no login: exchange lists of servers. `known` are servers the sender knows, and
     /// the sender's own address. Answered with `ServerMsg::Peers`.
     Peers { known: Vec<String> },
+    /// Create a category that channels can be grouped under. Any member may do this.
+    CreateCategory { name: String },
+    /// Delete a category. Its channels are kept: they become uncategorized.
+    DeleteCategory { category: i64 },
+    /// Switch to a channel by its id. Used when the channel is picked from a list.
+    JoinChannel { id: i64 },
+    /// Rename a channel. Its messages and its place in its category move with it.
+    RenameChannel { channel: i64, new_name: String },
+    /// Delete a channel and its messages. Only the server owner may do this.
+    DeleteChannel { channel: i64 },
+    /// Move a category so it comes before another one (or to the end, with `None`).
+    MoveCategory { category: i64, before: Option<i64> },
+    /// Put a channel in a category (or none) before another channel of that group. With `before`
+    /// None it goes last in the group.
+    PlaceChannel { channel: i64, category: Option<i64>, before: Option<i64> },
+    /// Put a channel in a category, or take it out of its category with `None`.
+    MoveChannel { channel: i64, category: Option<i64> },
     /// Server to server: deliver a direct message from the account of `token` to the account `to`,
     /// which this server stores as its own copy. Answered with `ServerMsg::RelayAck`.
     RelayDm { token: String, to: String, text: String },
 }
 
+/// A channel, by its permanent id and its current name. Only the name can change.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChannelRef {
+    pub id: i64,
+    pub name: String,
+}
+
+/// A category, by its permanent id, with the channels in it, in order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CategoryInfo {
+    pub id: i64,
+    pub name: String,
+    pub channels: Vec<ChannelRef>,
+}
+
 /// A direct message conversation, as the account that is part of it sees it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirectMessage {
+    /// The channel's permanent id.
+    #[serde(default)]
+    pub channel_id: i64,
     /// The channel name to join. It does not show who the conversation is with.
     pub channel: String,
     /// The other member's display name.
@@ -204,6 +247,9 @@ pub enum ServerMsg {
     /// `name` is your own display name; `server_name` and `server_description` describe the server.
     Welcome {
         name: String,
+        /// The server's own id. It stays the same when the server's address changes.
+        #[serde(default)]
+        server_id: String,
         /// Your hidden account id.
         #[serde(default)]
         user_id: String,
@@ -219,6 +265,9 @@ pub enum ServerMsg {
     ServerIcon { png_base64: Option<String> },
     /// This server's public details, for the server list.
     Info {
+        /// The server's own id, as in `Welcome`.
+        #[serde(default)]
+        server_id: String,
         name: String,
         description: String,
         icon: Option<String>,
@@ -229,24 +278,36 @@ pub enum ServerMsg {
     },
     /// Addresses of servers this one knows about, including itself.
     Peers { addrs: Vec<String> },
-    Joined { channel: String, history: Vec<ChatMessage> },
+    Joined { channel: ChannelRef, history: Vec<ChatMessage> },
     Message { message: ChatMessage },
     /// A message in `channel` now has this text.
-    MessageEdited { channel: String, id: i64, text: String },
+    MessageEdited { channel_id: i64, id: i64, text: String },
     /// A message in `channel` was deleted.
-    MessageDeleted { channel: String, id: i64 },
+    MessageDeleted { channel_id: i64, id: i64 },
     /// The reactions on a message in `channel` now look like this.
-    Reactions { channel: String, id: i64, reactions: Vec<Reaction> },
-    Channels { channels: Vec<String> },
+    Reactions { channel_id: i64, id: i64, reactions: Vec<Reaction> },
+    Channels { channels: Vec<ChannelRef> },
+    /// A channel was deleted. Anyone who had it open moves to another channel.
+    ChannelDeleted { id: i64 },
+    /// A channel was renamed. Everyone connected switches to the new name.
+    ChannelRenamed { id: i64, name: String },
+    /// The categories of this server, in order, each with its channels. Sent after every change to
+    /// them, and in reply to `ClientMsg::ListChannels`. Channels in no category are not listed.
+    /// `uncategorized` lists the channels in no category, in order.
+    Categories {
+        categories: Vec<CategoryInfo>,
+        #[serde(default)]
+        uncategorized: Vec<ChannelRef>,
+    },
     /// The direct messages this account is part of. `name` is the other member's display name.
     DirectMessages { list: Vec<DirectMessage> },
     /// The history of a direct message, as asked for with `ClientMsg::FetchDm`.
     DmHistory { channel: String, messages: Vec<ChatMessage> },
-    System { channel: String, text: String },
+    System { channel_id: i64, text: String },
     /// Every member of this server, online or not (sent to everyone on change).
     Presence { users: Vec<UserStatus> },
     /// A new message arrived in a channel other than the one you are viewing.
-    Activity { channel: String },
+    Activity { channel_id: i64 },
     /// Answer to `ClientMsg::RelayDm`. `error` says why the message was not stored.
     RelayAck { error: Option<String> },
     Error { text: String },
