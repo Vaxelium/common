@@ -177,9 +177,24 @@ pub enum ClientMsg {
     /// Public, no login: exchange lists of servers. `known` are servers the sender knows, and
     /// the sender's own address. Answered with `ServerMsg::Peers`.
     Peers { known: Vec<String> },
+    /// Create a category that channels can be grouped under. Any member may do this.
+    CreateCategory { name: String },
+    /// Delete a category. Its channels are kept: they become uncategorized.
+    DeleteCategory { name: String },
+    /// Rename a channel. Its messages and its place in its category move with it.
+    RenameChannel { channel: String, new_name: String },
+    /// Put a channel in a category, or take it out of its category with `None`.
+    MoveChannel { channel: String, category: Option<String> },
     /// Server to server: deliver a direct message from the account of `token` to the account `to`,
     /// which this server stores as its own copy. Answered with `ServerMsg::RelayAck`.
     RelayDm { token: String, to: String, text: String },
+}
+
+/// A category and the channels in it, in order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CategoryInfo {
+    pub name: String,
+    pub channels: Vec<String>,
 }
 
 /// A direct message conversation, as the account that is part of it sees it.
@@ -238,6 +253,11 @@ pub enum ServerMsg {
     /// The reactions on a message in `channel` now look like this.
     Reactions { channel: String, id: i64, reactions: Vec<Reaction> },
     Channels { channels: Vec<String> },
+    /// A channel was renamed. Everyone connected switches to the new name.
+    ChannelRenamed { old: String, new: String },
+    /// The categories of this server, in order, each with its channels. Sent after every change to
+    /// them, and in reply to `ClientMsg::ListChannels`. Channels in no category are not listed.
+    Categories { categories: Vec<CategoryInfo> },
     /// The direct messages this account is part of. `name` is the other member's display name.
     DirectMessages { list: Vec<DirectMessage> },
     /// The history of a direct message, as asked for with `ClientMsg::FetchDm`.
