@@ -431,6 +431,9 @@ pub enum ClientMsg {
     SetMemberBadge { user: String, badge: i64, on: bool },
     /// Set how this member appears to others on this server.
     SetStatus { status: PresenceStatus },
+    /// Set the status text shown on this member's card, sent live so everyone connected sees it.
+    /// Empty clears it. The text is saved by the auth service.
+    SetProfileStatus { text: String },
     /// This member is typing in the open channel. Sent a few times while they type.
     Typing,
     /// Set a role's exception for a channel (see `ChannelOverride`). `None` for both `view` and `send`
@@ -556,6 +559,8 @@ pub enum ServerMsg {
     Badges { badges: Vec<Badge> },
     /// Someone else is typing in a channel. Only sent to members who may view it.
     Typing { channel_id: i64, user: String, name: String },
+    /// A member changed their status text. Sent to everyone connected to this server.
+    ProfileStatus { user: String, text: String },
     /// Every channel's exceptions for roles. Sent on connect and after every change to them.
     ChannelOverrides { overrides: Vec<ChannelOverride> },
     /// A new message arrived in a channel other than the one you are viewing.
