@@ -263,8 +263,10 @@ pub mod perm {
     /// Has every permission, including ones switched off elsewhere. Holders can still only manage
     /// roles below their own.
     pub const ADMINISTRATOR: u32 = 1 << 6;
+    /// Change the server's name, description and picture. The owner always can.
+    pub const MANAGE_SERVER: u32 = 1 << 7;
     /// Every permission there is.
-    pub const ALL: u32 = MANAGE_CHANNELS | MANAGE_ROLES | MANAGE_MESSAGES | BYPASS_IGNORE | VIEW_CHANNEL | SEND_MESSAGES | ADMINISTRATOR;
+    pub const ALL: u32 = MANAGE_CHANNELS | MANAGE_ROLES | MANAGE_MESSAGES | BYPASS_IGNORE | VIEW_CHANNEL | SEND_MESSAGES | ADMINISTRATOR | MANAGE_SERVER;
 }
 
 /// One role's exception for one channel. `None` leaves the role's server-wide permission in place;
