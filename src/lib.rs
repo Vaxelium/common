@@ -402,6 +402,9 @@ pub enum ServerMsg {
         online: u32,
         /// True once other servers know this one.
         public: bool,
+        /// True when the server uses a certificate it made itself, not one from a certificate authority.
+        #[serde(default)]
+        self_signed: bool,
     },
     /// Addresses of servers this one knows about, including itself.
     Peers { addrs: Vec<String> },
