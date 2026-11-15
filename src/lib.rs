@@ -183,6 +183,12 @@ pub struct RoleInfo {
     pub permissions: u32,
     /// Higher means more power. Roles are listed highest first.
     pub position: i64,
+    /// Anyone may write `@name` to ping the role's members.
+    #[serde(default)]
+    pub mentionable: bool,
+    /// The role's members are listed in their own group in the member list, not under ONLINE.
+    #[serde(default)]
+    pub hoisted: bool,
 }
 
 /// Basic syntax check for an email address (not a full RFC 5322 parser).
@@ -259,10 +265,27 @@ pub enum ClientMsg {
     MoveChannel { channel: i64, category: Option<i64> },
     /// Create a role at the bottom of the hierarchy. Needs Manage roles, and can only grant
     /// permissions the sender has.
-    CreateRole { name: String, color: String, permissions: u32 },
+    CreateRole {
+        name: String,
+        color: String,
+        permissions: u32,
+        #[serde(default)]
+        mentionable: bool,
+        #[serde(default)]
+        hoisted: bool,
+    },
     /// Change a role's name, colour and permissions. Needs Manage roles, and the role must be below
     /// the sender's highest role.
-    UpdateRole { role: i64, name: String, color: String, permissions: u32 },
+    UpdateRole {
+        role: i64,
+        name: String,
+        color: String,
+        permissions: u32,
+        #[serde(default)]
+        mentionable: bool,
+        #[serde(default)]
+        hoisted: bool,
+    },
     /// Delete a role. Members who had it lose it. Same rules as `UpdateRole`.
     DeleteRole { role: i64 },
     /// Move a role so it sits just above another one (or at the bottom, with `None`). Same rules as
