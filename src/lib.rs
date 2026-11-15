@@ -17,6 +17,8 @@ pub const DISCOVERY_PORT: u16 = 7879;
 pub const MAX_SERVER_DESCRIPTION_LEN: usize = 1000;
 /// Largest server icon, as base64 text (a 128x128 PNG is far smaller than this).
 pub const MAX_SERVER_ICON_LEN: usize = 256 * 1024;
+/// Largest profile picture, as base64 text. Same limit as a server icon.
+pub const MAX_AVATAR_LEN: usize = MAX_SERVER_ICON_LEN;
 
 /// Requests sent to the auth service. One JSON line per request, one reply line back.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +47,12 @@ pub enum AuthRequest {
     Seen { token: String, addr: String },
     /// Ask which servers an account was last seen at, most recent first.
     Locate { id: String },
+    /// Ask for an account's public profile card, by its id. Needs no session.
+    ProfileCard { id: String },
+    /// Change the account's bio and profile banner colour. Needs a valid session.
+    SetAbout { token: String, bio: String, banner: String },
+    /// Set or remove (`None`) the account's profile picture, a PNG as base64. Needs a valid session.
+    SetAvatar { token: String, png_base64: Option<String> },
     /// Ask for the new ids of accounts that had their old id (their name) migrated to a random one.
     /// Used by chat servers to update what they stored under the old ids.
     Migrations { old_ids: Vec<String> },
@@ -71,7 +79,28 @@ pub enum AuthReply {
         /// True when this server can send email, so an address can be confirmed.
         #[serde(default)]
         can_verify: bool,
+        /// The account's bio and profile banner colour (`#rrggbb`, or empty for the default).
+        #[serde(default)]
+        bio: String,
+        #[serde(default)]
+        banner: String,
+        /// The profile picture as base64 PNG, or empty for none.
+        #[serde(default)]
+        avatar: String,
     },
+    /// An account's public profile card.
+    ProfileCard {
+        name: String,
+        username: String,
+        bio: String,
+        banner: String,
+        #[serde(default)]
+        avatar: String,
+    },
+    /// The profile picture was saved (empty when it was removed).
+    AvatarSaved { avatar: String },
+    /// The bio and banner were saved.
+    AboutSaved { bio: String, banner: String },
     /// The confirmation code was emailed.
     CodeSent,
     /// The email address is confirmed.
