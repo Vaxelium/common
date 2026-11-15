@@ -96,6 +96,9 @@ pub enum AuthReply {
         banner: String,
         #[serde(default)]
         avatar: String,
+        /// When the account was created, in Unix seconds (0 when unknown).
+        #[serde(default)]
+        created: u64,
     },
     /// The profile picture was saved (empty when it was removed).
     AvatarSaved { avatar: String },
@@ -178,6 +181,9 @@ pub struct UserStatus {
     /// The ids of the roles this member has, in no particular order.
     #[serde(default)]
     pub roles: Vec<i64>,
+    /// When this member first joined this server, in Unix seconds (0 when unknown).
+    #[serde(default)]
+    pub joined: u64,
 }
 
 /// Permissions a role can grant, as bits in `RoleInfo::permissions`. The owner has all of them.
