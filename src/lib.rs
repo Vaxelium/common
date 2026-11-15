@@ -168,6 +168,39 @@ pub struct ChatMessage {
     pub reactions: Vec<Reaction>,
 }
 
+/// How a member wants to appear to others. Invisible members show as offline.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresenceStatus {
+    #[default]
+    Online,
+    Idle,
+    DoNotDisturb,
+    Invisible,
+}
+
+impl PresenceStatus {
+    /// The name stored for a status in a server's database.
+    pub fn key(self) -> &'static str {
+        match self {
+            PresenceStatus::Online => "online",
+            PresenceStatus::Idle => "idle",
+            PresenceStatus::DoNotDisturb => "do_not_disturb",
+            PresenceStatus::Invisible => "invisible",
+        }
+    }
+
+    /// The status with this stored name. Unknown names are online.
+    pub fn from_key(key: &str) -> Self {
+        match key {
+            "idle" => PresenceStatus::Idle,
+            "do_not_disturb" => PresenceStatus::DoNotDisturb,
+            "invisible" => PresenceStatus::Invisible,
+            _ => PresenceStatus::Online,
+        }
+    }
+}
+
 /// A member of a server and whether they are connected right now.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserStatus {
@@ -184,6 +217,9 @@ pub struct UserStatus {
     /// When this member first joined this server, in Unix seconds (0 when unknown).
     #[serde(default)]
     pub joined: u64,
+    /// How the member wants to appear. Invisible members are sent as offline.
+    #[serde(default)]
+    pub status: PresenceStatus,
 }
 
 /// Permissions a role can grant, as bits in `RoleInfo::permissions`. The owner has all of them.
@@ -349,6 +385,10 @@ pub enum ClientMsg {
     /// Give a member a role, or take it away with `on` false. Needs Manage roles, and both the role
     /// and the member's highest role must be below the sender's highest role.
     SetMemberRole { user: String, role: i64, on: bool },
+    /// Set how this member appears to others on this server.
+    SetStatus { status: PresenceStatus },
+    /// This member is typing in the open channel. Sent a few times while they type.
+    Typing,
     /// Set a role's exception for a channel (see `ChannelOverride`). `None` for both `view` and `send`
     /// removes it. Needs Manage channels.
     SetChannelOverride {
@@ -468,6 +508,8 @@ pub enum ServerMsg {
     Presence { users: Vec<UserStatus> },
     /// The roles of this server, highest first. Sent on connect and after every change to them.
     Roles { roles: Vec<RoleInfo> },
+    /// Someone else is typing in a channel. Only sent to members who may view it.
+    Typing { channel_id: i64, user: String, name: String },
     /// Every channel's exceptions for roles. Sent on connect and after every change to them.
     ChannelOverrides { overrides: Vec<ChannelOverride> },
     /// A new message arrived in a channel other than the one you are viewing.
