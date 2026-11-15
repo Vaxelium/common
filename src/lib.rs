@@ -51,6 +51,8 @@ pub enum AuthRequest {
     ProfileCard { id: String },
     /// Change the account's bio and profile banner colour. Needs a valid session.
     SetAbout { token: String, bio: String, banner: String },
+    /// Set the account's status text, shown in a bubble on its profile card. Empty clears it.
+    SetStatusText { token: String, text: String },
     /// Set or remove (`None`) the account's profile picture, a PNG as base64. Needs a valid session.
     SetAvatar { token: String, png_base64: Option<String> },
     /// Ask for the new ids of accounts that had their old id (their name) migrated to a random one.
@@ -96,6 +98,9 @@ pub enum AuthReply {
         banner: String,
         #[serde(default)]
         avatar: String,
+        /// The status text in the bubble on the card. Empty when none is set.
+        #[serde(default)]
+        status: String,
         /// When the account was created, in Unix seconds (0 when unknown).
         #[serde(default)]
         created: u64,
@@ -104,6 +109,8 @@ pub enum AuthReply {
     AvatarSaved { avatar: String },
     /// The bio and banner were saved.
     AboutSaved { bio: String, banner: String },
+    /// The status text was saved (empty when cleared).
+    StatusTextSaved { text: String },
     /// The confirmation code was emailed.
     CodeSent,
     /// The email address is confirmed.
@@ -255,6 +262,9 @@ pub struct ChannelOverride {
     #[serde(default)]
     pub send: Option<bool>,
 }
+
+/// The longest status text, in characters.
+pub const MAX_STATUS_TEXT_LEN: usize = 60;
 
 /// Longest role name, in characters.
 pub const MAX_ROLE_NAME_LEN: usize = 32;
