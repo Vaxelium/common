@@ -196,8 +196,28 @@ pub mod perm {
     pub const MANAGE_MESSAGES: u32 = 1 << 2;
     /// Members with this cannot be ignored or blocked by anyone. The owner always counts as having it.
     pub const BYPASS_IGNORE: u32 = 1 << 3;
+    /// See the channels. A channel can allow or deny it for a role (see `ChannelOverride`).
+    pub const VIEW_CHANNEL: u32 = 1 << 4;
+    /// Send messages in the channels. A channel can allow or deny it for a role (see `ChannelOverride`).
+    pub const SEND_MESSAGES: u32 = 1 << 5;
+    /// Has every permission, including ones switched off elsewhere. Holders can still only manage
+    /// roles below their own.
+    pub const ADMINISTRATOR: u32 = 1 << 6;
     /// Every permission there is.
-    pub const ALL: u32 = MANAGE_CHANNELS | MANAGE_ROLES | MANAGE_MESSAGES | BYPASS_IGNORE;
+    pub const ALL: u32 = MANAGE_CHANNELS | MANAGE_ROLES | MANAGE_MESSAGES | BYPASS_IGNORE | VIEW_CHANNEL | SEND_MESSAGES | ADMINISTRATOR;
+}
+
+/// One role's exception for one channel. `None` leaves the role's server-wide permission in place;
+/// `Some(true)` allows the channel for the role and `Some(false)` denies it, whatever the role's
+/// server-wide permission says. A denial from any of a member's roles wins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChannelOverride {
+    pub channel_id: i64,
+    pub role: i64,
+    #[serde(default)]
+    pub view: Option<bool>,
+    #[serde(default)]
+    pub send: Option<bool>,
 }
 
 /// Longest role name, in characters.
@@ -329,6 +349,16 @@ pub enum ClientMsg {
     /// Give a member a role, or take it away with `on` false. Needs Manage roles, and both the role
     /// and the member's highest role must be below the sender's highest role.
     SetMemberRole { user: String, role: i64, on: bool },
+    /// Set a role's exception for a channel (see `ChannelOverride`). `None` for both `view` and `send`
+    /// removes it. Needs Manage channels.
+    SetChannelOverride {
+        channel: i64,
+        role: i64,
+        #[serde(default)]
+        view: Option<bool>,
+        #[serde(default)]
+        send: Option<bool>,
+    },
     /// Server to server: deliver a direct message from the account of `token` to the account `to`,
     /// which this server stores as its own copy. Answered with `ServerMsg::RelayAck`.
     RelayDm { token: String, to: String, text: String },
@@ -438,6 +468,8 @@ pub enum ServerMsg {
     Presence { users: Vec<UserStatus> },
     /// The roles of this server, highest first. Sent on connect and after every change to them.
     Roles { roles: Vec<RoleInfo> },
+    /// Every channel's exceptions for roles. Sent on connect and after every change to them.
+    ChannelOverrides { overrides: Vec<ChannelOverride> },
     /// A new message arrived in a channel other than the one you are viewing.
     Activity { channel_id: i64 },
     /// Answer to `ClientMsg::RelayDm`. `error` says why the message was not stored.
