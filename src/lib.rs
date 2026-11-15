@@ -48,7 +48,16 @@ pub enum AuthRequest {
     /// Ask which servers an account was last seen at, most recent first.
     Locate { id: String },
     /// Ask for an account's public profile card, by its id. Needs no session.
-    ProfileCard { id: String },
+    /// `token` is the viewer's session, when there is one. With it the card lists the servers the viewer
+    /// and the member share.
+    ProfileCard {
+        id: String,
+        #[serde(default)]
+        token: String,
+    },
+    /// Report the servers this account is in, by address. The client sends it after connecting, so other
+    /// people's cards can show the servers they share with the viewer. Needs a valid session.
+    SetServers { token: String, servers: Vec<String> },
     /// Change the account's bio and profile banner colour. Needs a valid session.
     SetAbout { token: String, bio: String, banner: String },
     /// Set the account's status text, shown in a bubble on its profile card. Empty clears it.
@@ -101,6 +110,9 @@ pub enum AuthReply {
         /// The status text in the bubble on the card. Empty when none is set.
         #[serde(default)]
         status: String,
+        /// The servers (by address) that the viewer and this member are both in. Empty without a session.
+        #[serde(default)]
+        mutual: Vec<String>,
         /// When the account was created, in Unix seconds (0 when unknown).
         #[serde(default)]
         created: u64,
@@ -111,6 +123,8 @@ pub enum AuthReply {
     AboutSaved { bio: String, banner: String },
     /// The status text was saved (empty when cleared).
     StatusTextSaved { text: String },
+    /// The servers were saved.
+    ServersSaved,
     /// The confirmation code was emailed.
     CodeSent,
     /// The email address is confirmed.
@@ -227,6 +241,9 @@ pub struct UserStatus {
     /// How the member wants to appear. Invisible members are sent as offline.
     #[serde(default)]
     pub status: PresenceStatus,
+    /// The ids of the badges this member has on this server.
+    #[serde(default)]
+    pub badges: Vec<i64>,
 }
 
 /// Permissions a role can grant, as bits in `RoleInfo::permissions`. The owner has all of them.
@@ -272,6 +289,15 @@ pub const MAX_ROLE_NAME_LEN: usize = 32;
 /// The id of the `@everyone` role. Every member has it, it always sits at the bottom of the
 /// hierarchy, and it cannot be deleted, moved or given out. Its colour and permissions apply to all.
 pub const EVERYONE_ROLE: i64 = 0;
+
+/// A badge an admin gives a member on this server. It shows on the member's profile card.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Badge {
+    pub id: i64,
+    pub name: String,
+    /// A hex colour like "#5865f2", or empty for the default.
+    pub color: String,
+}
 
 /// A role members can be given. Members get the permissions of all their roles together.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -395,6 +421,12 @@ pub enum ClientMsg {
     /// Give a member a role, or take it away with `on` false. Needs Manage roles, and both the role
     /// and the member's highest role must be below the sender's highest role.
     SetMemberRole { user: String, role: i64, on: bool },
+    /// Create a badge on this server, shown on members' profile cards. Needs Manage roles.
+    CreateBadge { name: String, color: String },
+    /// Delete a badge. Members who had it lose it. Needs Manage roles.
+    DeleteBadge { badge: i64 },
+    /// Give a badge to a member, or take it away with `on` false. Needs Manage roles.
+    SetMemberBadge { user: String, badge: i64, on: bool },
     /// Set how this member appears to others on this server.
     SetStatus { status: PresenceStatus },
     /// This member is typing in the open channel. Sent a few times while they type.
@@ -518,6 +550,8 @@ pub enum ServerMsg {
     Presence { users: Vec<UserStatus> },
     /// The roles of this server, highest first. Sent on connect and after every change to them.
     Roles { roles: Vec<RoleInfo> },
+    /// The badges of this server. Sent on connect and after every change to them.
+    Badges { badges: Vec<Badge> },
     /// Someone else is typing in a channel. Only sent to members who may view it.
     Typing { channel_id: i64, user: String, name: String },
     /// Every channel's exceptions for roles. Sent on connect and after every change to them.
