@@ -327,6 +327,156 @@ pub struct ChatMessage {
     pub pinned: bool,
 }
 
+/// A server's automatic moderation rules. Members who may manage messages in a channel are not held to
+/// the message rules there, and direct messages are never checked.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AutoMod {
+    /// Words and phrases a message may not contain, matched without regard to case (see `matches`).
+    #[serde(default)]
+    pub blocked_words: Vec<String>,
+    /// Refuse messages with web links in them.
+    #[serde(default)]
+    pub block_links: bool,
+    /// Refuse a member's message when they have sent `SPAM_LIMIT` in the last `SPAM_WINDOW_SECS`.
+    #[serde(default)]
+    pub spam_filter: bool,
+    /// The rule for members' names.
+    #[serde(default)]
+    pub names: NameRule,
+    /// The channel AutoMod reports to: every time it blocks something, and when it flags a name.
+    #[serde(default)]
+    pub alert_channel: Option<i64>,
+}
+
+/// Flags members whose names contain a listed word, and says what to do about them. Members with
+/// Administrator or Manage Server, and members holding one of `allowed_roles`, are never flagged.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NameRule {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Words and phrases a name may not contain (see `matches`).
+    #[serde(default)]
+    pub words: Vec<String>,
+    /// A flagged member may not send, edit, react or pin until they change their name.
+    #[serde(default)]
+    pub block_interactions: bool,
+    /// Post an alert to AutoMod's channel the first time a flagged member sends a message.
+    #[serde(default)]
+    pub send_alert: bool,
+    /// Where alerts went before AutoMod had one channel for all its reports. Read from older rules and
+    /// moved to `AutoMod::alert_channel` by `tidied`.
+    #[serde(default, rename = "alert_channel", skip_serializing)]
+    pub old_alert_channel: Option<i64>,
+    /// Roles whose holders the rule leaves alone.
+    #[serde(default)]
+    pub allowed_roles: Vec<i64>,
+}
+
+impl NameRule {
+    /// The listed word a name matches, or None when it is fine (or the rule is off).
+    pub fn flags(&self, name: &str) -> Option<&str> {
+        if !self.enabled {
+            return None;
+        }
+        let lower = name.to_lowercase();
+        self.words.iter().find(|w| matches(&lower, w)).map(String::as_str)
+    }
+}
+
+/// The author id of messages the server's AutoMod posts, such as its alerts. No account can have it,
+/// so clients show these messages as coming from the server itself.
+pub const AUTOMOD_ID: &str = "system:automod";
+
+/// Whether a message was posted by the server's AutoMod.
+pub fn is_automod(author_id: &str) -> bool {
+    author_id == AUTOMOD_ID
+}
+
+/// How many messages a member may send within `SPAM_WINDOW_SECS` while the spam filter is on.
+pub const SPAM_LIMIT: usize = 5;
+pub const SPAM_WINDOW_SECS: u64 = 5;
+/// The most words a word list can have, and the longest one.
+pub const MAX_BLOCKED_WORDS: usize = 1000;
+pub const MAX_BLOCKED_WORD_LEN: usize = 60;
+
+impl AutoMod {
+    /// Why `text` breaks the message rules, or None when it does not. The spam filter is checked
+    /// separately, as it depends on what was sent before.
+    pub fn check(&self, text: &str) -> Option<String> {
+        let lower = text.to_lowercase();
+        if let Some(word) = self.blocked_words.iter().find(|w| matches(&lower, w)) {
+            return Some(format!("AutoMod: your message contains a blocked word ({word})"));
+        }
+        if self.block_links && has_link(&lower) {
+            return Some("AutoMod: links are not allowed here".into());
+        }
+        None
+    }
+
+    /// The rules as given, tidied: word lists trimmed, lower-cased, without blanks or repeats, and
+    /// within the limits.
+    pub fn tidied(mut self) -> Self {
+        self.blocked_words = tidy_words(self.blocked_words);
+        self.names.words = tidy_words(self.names.words);
+        self.names.allowed_roles.sort_unstable();
+        self.names.allowed_roles.dedup();
+        if let Some(channel) = self.names.old_alert_channel.take() {
+            if self.alert_channel.is_none() {
+                self.alert_channel = Some(channel);
+                self.names.send_alert = true;
+            }
+        }
+        self
+    }
+}
+
+/// Splits a word list as typed, on commas and new lines.
+pub fn split_words(typed: &str) -> Vec<String> {
+    typed.split([',', '\n']).map(str::to_string).collect()
+}
+
+fn tidy_words(list: Vec<String>) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    for w in list {
+        let w: String = w.trim().to_lowercase().chars().take(MAX_BLOCKED_WORD_LEN).collect();
+        if !w.is_empty() && w != "*" && !words.contains(&w) {
+            words.push(w);
+        }
+    }
+    words.truncate(MAX_BLOCKED_WORDS);
+    words
+}
+
+/// Whether lower-cased `text` matches a listed word, as Discord does: `cat` only as a whole word,
+/// `cat*` at the start of a word, `*cat` at the end of one, and `*cat*` anywhere.
+pub fn matches(text: &str, pattern: &str) -> bool {
+    let pattern = pattern.to_lowercase();
+    let open_start = pattern.starts_with('*');
+    let open_end = pattern.ends_with('*') && pattern.len() > 1;
+    let needle = pattern.trim_matches('*');
+    if needle.is_empty() {
+        return false;
+    }
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut from = 0;
+    while let Some(at) = text[from..].find(needle) {
+        let start = from + at;
+        let end = start + needle.len();
+        let before_ok = open_start || !text[..start].chars().next_back().is_some_and(is_word);
+        let after_ok = open_end || !text[end..].chars().next().is_some_and(is_word);
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + needle.chars().next().map_or(1, char::len_utf8);
+    }
+    false
+}
+
+/// Whether text has a web link in it: an address starting http://, https:// or www.
+fn has_link(lower: &str) -> bool {
+    lower.contains("http://") || lower.contains("https://") || lower.split_whitespace().any(|w| w.starts_with("www."))
+}
+
 /// The most messages a channel can have pinned at once.
 pub const MAX_PINS: usize = 50;
 
@@ -683,6 +833,10 @@ pub enum ClientMsg {
     Pin { id: i64, pinned: bool },
     /// Ask for a channel's pinned messages.
     ListPins { channel: i64 },
+    /// Ask for the server's automatic moderation rules. Needs Manage Server.
+    GetAutoMod,
+    /// Replace the server's automatic moderation rules. Needs Manage Server.
+    SetAutoMod { rules: AutoMod },
     /// Add your reaction to a message, or take it off if it is already there.
     React { id: i64, emoji: String },
     /// Request the list of channels.
@@ -943,6 +1097,10 @@ pub enum ServerMsg {
         channel_id: i64,
         messages: Vec<ChatMessage>,
     },
+    /// The server's automatic moderation rules, for those who may change them.
+    AutoMod {
+        rules: AutoMod,
+    },
     /// The reactions on a message in `channel` now look like this.
     Reactions {
         channel_id: i64,
@@ -1030,3 +1188,7 @@ pub enum ServerMsg {
         text: String,
     },
 }
+
+#[cfg(test)]
+#[path = "tests/automod.rs"]
+mod automod_tests;
