@@ -269,6 +269,76 @@ pub mod perm {
     pub const ALL: u32 = MANAGE_CHANNELS | MANAGE_ROLES | MANAGE_MESSAGES | BYPASS_IGNORE | VIEW_CHANNEL | SEND_MESSAGES | ADMINISTRATOR | MANAGE_SERVER;
 }
 
+/// Who a setting is for is decided by the caller. This picks the outcome for one permission: a member's
+/// own setting first, then their roles' settings, where a denial wins over an allowance. `None` means
+/// the server-wide permission decides.
+pub fn grant(member: Option<Setting>, roles: &[Setting], bit: u32) -> Option<bool> {
+    if let Some(value) = member.and_then(|s| s.get(bit)) {
+        return Some(value);
+    }
+    let mut allowed = false;
+    for setting in roles {
+        match setting.get(bit) {
+            Some(false) => return Some(false),
+            Some(true) => allowed = true,
+            None => {}
+        }
+    }
+    allowed.then_some(true)
+}
+
+impl ChannelOverride {
+    pub fn setting(&self) -> Setting {
+        Setting { view: self.view, send: self.send, manage_channels: self.manage_channels, manage_messages: self.manage_messages }
+    }
+}
+
+impl CategoryOverride {
+    pub fn setting(&self) -> Setting {
+        Setting { view: self.view, send: self.send, manage_channels: self.manage_channels, manage_messages: self.manage_messages }
+    }
+}
+
+impl MemberChannelOverride {
+    pub fn setting(&self) -> Setting {
+        Setting { view: self.view, send: self.send, manage_channels: self.manage_channels, manage_messages: self.manage_messages }
+    }
+}
+
+impl MemberCategoryOverride {
+    pub fn setting(&self) -> Setting {
+        Setting { view: self.view, send: self.send, manage_channels: self.manage_channels, manage_messages: self.manage_messages }
+    }
+}
+
+/// The four settings a channel or category can give a role or member. `None` leaves the server-wide
+/// setting in place; `Some(true)` allows and `Some(false)` denies.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Setting {
+    pub view: Option<bool>,
+    pub send: Option<bool>,
+    pub manage_channels: Option<bool>,
+    pub manage_messages: Option<bool>,
+}
+
+impl Setting {
+    /// The setting for one permission bit, if this sets it.
+    pub fn get(&self, bit: u32) -> Option<bool> {
+        match bit {
+            perm::VIEW_CHANNEL => self.view,
+            perm::SEND_MESSAGES => self.send,
+            perm::MANAGE_CHANNELS => self.manage_channels,
+            perm::MANAGE_MESSAGES => self.manage_messages,
+            _ => None,
+        }
+    }
+
+    /// True when nothing is set, so the entry can be removed.
+    pub fn is_empty(&self) -> bool {
+        *self == Setting::default()
+    }
+}
+
 /// One role's exception for one channel. `None` leaves the role's server-wide permission in place;
 /// `Some(true)` allows the channel for the role and `Some(false)` denies it, whatever the role's
 /// server-wide permission says. A denial from any of a member's roles wins.
@@ -280,6 +350,10 @@ pub struct ChannelOverride {
     pub view: Option<bool>,
     #[serde(default)]
     pub send: Option<bool>,
+    #[serde(default)]
+    pub manage_channels: Option<bool>,
+    #[serde(default)]
+    pub manage_messages: Option<bool>,
 }
 
 /// One role's permission for a category. Setting it sets the same permission on every channel in the
@@ -292,6 +366,10 @@ pub struct CategoryOverride {
     pub view: Option<bool>,
     #[serde(default)]
     pub send: Option<bool>,
+    #[serde(default)]
+    pub manage_channels: Option<bool>,
+    #[serde(default)]
+    pub manage_messages: Option<bool>,
 }
 
 /// Who a permission is for: a role, or one member by account id.
@@ -311,6 +389,10 @@ pub struct MemberChannelOverride {
     pub view: Option<bool>,
     #[serde(default)]
     pub send: Option<bool>,
+    #[serde(default)]
+    pub manage_channels: Option<bool>,
+    #[serde(default)]
+    pub manage_messages: Option<bool>,
 }
 
 /// One member's permission for a category. Like a role's, it is copied to every channel in the category.
@@ -323,6 +405,10 @@ pub struct MemberCategoryOverride {
     pub view: Option<bool>,
     #[serde(default)]
     pub send: Option<bool>,
+    #[serde(default)]
+    pub manage_channels: Option<bool>,
+    #[serde(default)]
+    pub manage_messages: Option<bool>,
 }
 
 /// The longest status text, in characters.
@@ -490,6 +576,10 @@ pub enum ClientMsg {
         view: Option<bool>,
         #[serde(default)]
         send: Option<bool>,
+        #[serde(default)]
+        manage_channels: Option<bool>,
+        #[serde(default)]
+        manage_messages: Option<bool>,
     },
     /// Set a role's permission for a category, and for every channel in it. `None` for both removes
     /// it. Needs Manage channels.
@@ -500,6 +590,10 @@ pub enum ClientMsg {
         view: Option<bool>,
         #[serde(default)]
         send: Option<bool>,
+        #[serde(default)]
+        manage_channels: Option<bool>,
+        #[serde(default)]
+        manage_messages: Option<bool>,
     },
     /// Set a member's permission for a category, and for every channel in it. Needs Manage channels.
     SetCategoryMemberOverride {
@@ -509,6 +603,10 @@ pub enum ClientMsg {
         view: Option<bool>,
         #[serde(default)]
         send: Option<bool>,
+        #[serde(default)]
+        manage_channels: Option<bool>,
+        #[serde(default)]
+        manage_messages: Option<bool>,
     },
     /// Set a member's permission for a channel. Needs Manage channels.
     SetChannelMemberOverride {
@@ -518,6 +616,10 @@ pub enum ClientMsg {
         view: Option<bool>,
         #[serde(default)]
         send: Option<bool>,
+        #[serde(default)]
+        manage_channels: Option<bool>,
+        #[serde(default)]
+        manage_messages: Option<bool>,
     },
     /// Server to server: deliver a direct message from the account of `token` to the account `to`,
     /// which this server stores as its own copy. Answered with `ServerMsg::RelayAck`.
