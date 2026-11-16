@@ -67,7 +67,18 @@ pub enum AuthRequest {
     /// Ask for the new ids of accounts that had their old id (their name) migrated to a random one.
     /// Used by chat servers to update what they stored under the old ids.
     Migrations { old_ids: Vec<String> },
+    /// Start a login with Discord. `redirect_uri` is where Discord sends the browser back to, which is
+    /// the client's listener on this computer. The reply is the Discord page to open and the `state`
+    /// the callback has to carry back.
+    DiscordStart { redirect_uri: String },
+    /// Finish a login with Discord, with the `code` Discord sent to `redirect_uri`. Logs in to the account
+    /// linked to that Discord account, links a confirmed account with the same email, or creates one.
+    DiscordLogin { code: String, redirect_uri: String },
 }
+
+/// The port the client listens on for Discord to send the browser back to. Register
+/// `http://127.0.0.1:<this port>/callback` as a redirect URI in the Discord developer portal.
+pub const DISCORD_CALLBACK_PORT: u16 = 53134;
 
 /// Replies from the auth service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +150,8 @@ pub enum AuthReply {
     Migrations { pairs: Vec<(String, String)> },
     /// A sighting was recorded.
     Recorded,
+    /// The Discord page to open, and the state the callback must return with the code.
+    DiscordUrl { url: String, state: String },
     Error { text: String },
 }
 
