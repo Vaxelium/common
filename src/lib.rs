@@ -74,6 +74,11 @@ pub enum AuthRequest {
     /// Finish a login with Discord, with the `code` Discord sent to `redirect_uri`. Logs in to the account
     /// linked to that Discord account, links a confirmed account with the same email, or creates one.
     DiscordLogin { code: String, redirect_uri: String },
+    /// Ask which outside accounts are linked to the session's account. Needs a valid session.
+    LinkedAccounts { token: String },
+    /// Remove the link to the session's Discord account. Refused for accounts that have no password,
+    /// since they could no longer log in. Needs a valid session.
+    UnlinkDiscord { token: String },
 }
 
 /// The port the client listens on for Discord to send the browser back to. Register
@@ -152,6 +157,11 @@ pub enum AuthReply {
     Recorded,
     /// The Discord page to open, and the state the callback must return with the code.
     DiscordUrl { url: String, state: String },
+    /// The Discord account linked to the session's account, by its display name (None when not linked),
+    /// and whether that link can be removed.
+    LinkedAccounts { discord: Option<String>, can_unlink_discord: bool },
+    /// The Discord link was removed.
+    DiscordUnlinked,
     Error { text: String },
 }
 
