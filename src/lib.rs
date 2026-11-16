@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod env;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod tls;
 
 /// Default address of a chat server.
