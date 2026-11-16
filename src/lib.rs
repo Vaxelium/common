@@ -319,6 +319,32 @@ pub struct ChatMessage {
     /// Reactions on the message, in the order they were first added.
     #[serde(default)]
     pub reactions: Vec<Reaction>,
+    /// The message this one answers, when it is a reply.
+    #[serde(default)]
+    pub reply: Option<ReplyRef>,
+}
+
+/// The message a reply answers, as shown above the reply: who wrote it and how it starts. When the
+/// original has been deleted, `author_id` and `text` are empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReplyRef {
+    pub id: i64,
+    pub author: String,
+    pub author_id: String,
+    pub text: String,
+}
+
+/// How much of the original message a reply shows, in characters.
+pub const REPLY_PREVIEW_LEN: usize = 120;
+
+/// How a reply shows the start of the message it answers: on one line, cut to a set length.
+pub fn reply_preview(text: &str) -> String {
+    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out: String = one_line.chars().take(REPLY_PREVIEW_LEN).collect();
+    if one_line.chars().count() > REPLY_PREVIEW_LEN {
+        out.push('…');
+    }
+    out
 }
 
 /// How a member wants to appear to others. Invisible members show as offline.
@@ -633,8 +659,12 @@ pub enum ClientMsg {
     Connect { token: String },
     /// Switch to a channel (created on demand). Receives its history.
     Join { channel: String },
-    /// Send a message to the current channel.
-    Say { text: String },
+    /// Send a message to the current channel, as a reply to the message `reply_to` when it is set.
+    Say {
+        text: String,
+        #[serde(default)]
+        reply_to: Option<i64>,
+    },
     /// Change the text of one of your own messages.
     Edit { id: i64, text: String },
     /// Delete one of your own messages.
