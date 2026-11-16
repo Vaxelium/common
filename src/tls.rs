@@ -43,7 +43,10 @@ pub fn acceptor(cert_pem: &str, key_pem: &str) -> anyhow::Result<TlsAcceptor> {
 
 /// SHA-256 of a certificate, written as hex. This is what clients remember.
 pub fn fingerprint(cert: &CertificateDer<'_>) -> String {
-    Sha256::digest(cert.as_ref()).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(cert.as_ref())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Decides what to do with a server's certificate, given the fingerprint remembered for it.
@@ -52,11 +55,9 @@ pub fn check_pin(remembered: Option<&str>, observed: &str) -> Result<bool, Strin
     match remembered {
         None => Ok(true),
         Some(known) if known == observed => Ok(false),
-        Some(_) => Err(
-            "This server's certificate has changed since you last connected. \
+        Some(_) => Err("This server's certificate has changed since you last connected. \
              If you trust the change, choose Trust the new certificate."
-                .to_string(),
-        ),
+            .to_string()),
     }
 }
 
@@ -108,7 +109,10 @@ fn client_config(seen: Arc<Mutex<Option<String>>>) -> anyhow::Result<Arc<ClientC
     let provider = CryptoProvider::get_default()
         .cloned()
         .unwrap_or_else(|| Arc::new(rustls::crypto::ring::default_provider()));
-    let verifier = Tofu { seen, algorithms: provider.signature_verification_algorithms };
+    let verifier = Tofu {
+        seen,
+        algorithms: provider.signature_verification_algorithms,
+    };
     let config = ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(verifier))
@@ -156,7 +160,11 @@ pub async fn connect_async(addr: &str) -> anyhow::Result<(AsyncClientStream<Asyn
     let tcp = AsyncTcpStream::connect(addr).await?;
     let name = ServerName::try_from(CERT_NAME)?;
     let stream = connector.connect(name, tcp).await?;
-    let fingerprint = seen.lock().unwrap().clone().ok_or_else(|| anyhow::anyhow!("no certificate from server"))?;
+    let fingerprint = seen
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("no certificate from server"))?;
     Ok((stream, fingerprint))
 }
 

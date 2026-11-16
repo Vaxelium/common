@@ -18,14 +18,20 @@ fn client_reads_server_fingerprint_and_pins_it() {
     let addr = listener.local_addr().unwrap().to_string();
     runtime.spawn(async move {
         loop {
-            let Ok((socket, _)) = listener.accept().await else { break };
+            let Ok((socket, _)) = listener.accept().await else {
+                break;
+            };
             let acceptor = acceptor.clone();
             tokio::spawn(async move {
                 if let Ok(mut tls) = acceptor.accept(socket).await {
                     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
                     let mut lines = BufReader::new(&mut tls).lines();
                     if let Ok(Some(_)) = lines.next_line().await {
-                        let _ = lines.get_mut().get_mut().write_all(b"{\"type\":\"error\",\"text\":\"hi\"}\n").await;
+                        let _ = lines
+                            .get_mut()
+                            .get_mut()
+                            .write_all(b"{\"type\":\"error\",\"text\":\"hi\"}\n")
+                            .await;
                     }
                 }
             });

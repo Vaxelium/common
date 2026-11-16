@@ -24,29 +24,62 @@ pub const MAX_AVATAR_LEN: usize = MAX_SERVER_ICON_LEN;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthRequest {
-    Register { name: String, email: String, password: String },
-    Login { email: String, password: String },
+    Register {
+        name: String,
+        email: String,
+        password: String,
+    },
+    Login {
+        email: String,
+        password: String,
+    },
     /// Ask who a session token belongs to. Used by chat servers.
-    Verify { token: String },
+    Verify {
+        token: String,
+    },
     /// End a session so its token stops working.
-    Logout { token: String },
+    Logout {
+        token: String,
+    },
     /// Ask for the account's names and email. Needs a valid session.
-    Profile { token: String },
+    Profile {
+        token: String,
+    },
     /// Change the name shown in chat, the username, or both. Needs a valid session.
-    UpdateProfile { token: String, name: Option<String>, username: Option<String> },
+    UpdateProfile {
+        token: String,
+        name: Option<String>,
+        username: Option<String>,
+    },
     /// Ask for a code to confirm the account's email address. The code is emailed to it. Needs a session.
-    RequestEmailCode { token: String },
+    RequestEmailCode {
+        token: String,
+    },
     /// Confirm the account's email address with the code that was emailed. Needs a session.
-    VerifyEmail { token: String, code: String },
+    VerifyEmail {
+        token: String,
+        code: String,
+    },
     /// Change the account's email. Needs the session and the current password.
-    ChangeEmail { token: String, password: String, new_email: String },
+    ChangeEmail {
+        token: String,
+        password: String,
+        new_email: String,
+    },
     /// Find an account by its display name. Used to start a direct message with someone who is not
     /// on the same server.
-    Lookup { name: String },
+    Lookup {
+        name: String,
+    },
     /// A chat server reports that the account of `token` was connected at `addr`.
-    Seen { token: String, addr: String },
+    Seen {
+        token: String,
+        addr: String,
+    },
     /// Ask which servers an account was last seen at, most recent first.
-    Locate { id: String },
+    Locate {
+        id: String,
+    },
     /// Ask for an account's public profile card, by its id. Needs no session.
     /// `token` is the viewer's session, when there is one. With it the card lists the servers the viewer
     /// and the member share.
@@ -57,16 +90,31 @@ pub enum AuthRequest {
     },
     /// Report the servers this account is in, by address. The client sends it after connecting, so other
     /// people's cards can show the servers they share with the viewer. Needs a valid session.
-    SetServers { token: String, servers: Vec<String> },
+    SetServers {
+        token: String,
+        servers: Vec<String>,
+    },
     /// Change the account's bio and profile banner colour. Needs a valid session.
-    SetAbout { token: String, bio: String, banner: String },
+    SetAbout {
+        token: String,
+        bio: String,
+        banner: String,
+    },
     /// Set the account's status text, shown in a bubble on its profile card. Empty clears it.
-    SetStatusText { token: String, text: String },
+    SetStatusText {
+        token: String,
+        text: String,
+    },
     /// Set or remove (`None`) the account's profile picture, a PNG as base64. Needs a valid session.
-    SetAvatar { token: String, png_base64: Option<String> },
+    SetAvatar {
+        token: String,
+        png_base64: Option<String>,
+    },
     /// Ask for the new ids of accounts that had their old id (their name) migrated to a random one.
     /// Used by chat servers to update what they stored under the old ids.
-    Migrations { old_ids: Vec<String> },
+    Migrations {
+        old_ids: Vec<String>,
+    },
     /// Start a login with Discord, or, when `token` is a session, link a Discord account to that account.
     /// The reply is the Discord page to open and the `state` to pass to `DiscordPoll`.
     DiscordStart {
@@ -75,29 +123,46 @@ pub enum AuthRequest {
     },
     /// Ask whether the Discord login with this `state` has finished. Replies `DiscordPending` until the
     /// browser comes back. Then it completes: `Session` for a login, `DiscordLinked` for a link.
-    DiscordPoll { state: String },
+    DiscordPoll {
+        state: String,
+    },
     /// Set a password on an account that has none, such as one made with Discord. Needs a valid session.
-    SetPassword { token: String, password: String },
+    SetPassword {
+        token: String,
+        password: String,
+    },
     /// Permanently delete the session's account. Needs the current password, so an account without one
     /// must set one first. Needs a valid session.
-    DeleteAccount { token: String, password: String },
+    DeleteAccount {
+        token: String,
+        password: String,
+    },
     /// Ask which outside accounts are linked to the session's account. Needs a valid session.
-    LinkedAccounts { token: String },
+    LinkedAccounts {
+        token: String,
+    },
     /// Remove the link to the session's Discord account. Refused for accounts that have no password,
     /// since they could no longer log in. Needs a valid session.
-    UnlinkDiscord { token: String },
+    UnlinkDiscord {
+        token: String,
+    },
 }
-
 
 /// Replies from the auth service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthReply {
     /// Register or login succeeded. Keep `token` and send it to chat servers.
-    Session { token: String, name: String },
+    Session {
+        token: String,
+        name: String,
+    },
     /// The token is valid for this account.
     /// `id` identifies the account in chat; `name` is the name to show.
-    Verified { id: String, name: String },
+    Verified {
+        id: String,
+        name: String,
+    },
     LoggedOut,
     /// The account's display name, username, and email if one is on record.
     /// `verified` is true once the account has confirmed its email address.
@@ -141,11 +206,18 @@ pub enum AuthReply {
         created: u64,
     },
     /// The profile picture was saved (empty when it was removed).
-    AvatarSaved { avatar: String },
+    AvatarSaved {
+        avatar: String,
+    },
     /// The bio and banner were saved.
-    AboutSaved { bio: String, banner: String },
+    AboutSaved {
+        bio: String,
+        banner: String,
+    },
     /// The status text was saved (empty when cleared).
-    StatusTextSaved { text: String },
+    StatusTextSaved {
+        text: String,
+    },
     /// The servers were saved.
     ServersSaved,
     /// The confirmation code was emailed.
@@ -153,38 +225,60 @@ pub enum AuthReply {
     /// The email address is confirmed.
     EmailVerified,
     /// The email was changed to this one.
-    EmailChanged { email: String },
+    EmailChanged {
+        email: String,
+    },
     /// The account with the display name that was looked up.
-    Account { id: String, name: String },
+    Account {
+        id: String,
+        name: String,
+    },
     /// The servers an account was last seen at, most recent first.
-    Locations { addrs: Vec<String> },
+    Locations {
+        addrs: Vec<String>,
+    },
     /// The (old id, new id) pairs for the old ids asked about that were migrated.
-    Migrations { pairs: Vec<(String, String)> },
+    Migrations {
+        pairs: Vec<(String, String)>,
+    },
     /// A sighting was recorded.
     Recorded,
     /// The Discord page to open, and the state to poll with.
-    DiscordUrl { url: String, state: String },
+    DiscordUrl {
+        url: String,
+        state: String,
+    },
     /// The Discord login has not finished yet. Poll again.
     DiscordPending,
     /// A Discord account was linked to the session's account. `discord` is its name.
-    DiscordLinked { discord: String },
+    DiscordLinked {
+        discord: String,
+    },
     /// The password was set.
     PasswordSet,
     /// The account was deleted.
     AccountDeleted,
     /// The Discord account linked to the session's account, by its display name (None when not linked),
     /// and whether that link can be removed.
-    LinkedAccounts { discord: Option<String>, can_unlink_discord: bool },
+    LinkedAccounts {
+        discord: Option<String>,
+        can_unlink_discord: bool,
+    },
     /// The Discord link was removed.
     DiscordUnlinked,
-    Error { text: String },
+    Error {
+        text: String,
+    },
 }
 
 pub mod emoji_data;
 
 /// The five skin tone variants of an emoji (light to dark), if it has them.
 pub fn skin_tone_variants(emoji: &str) -> Option<&'static [&'static str; 5]> {
-    emoji_data::SKIN_TONES.iter().find(|(base, _)| *base == emoji).map(|(_, variants)| variants)
+    emoji_data::SKIN_TONES
+        .iter()
+        .find(|(base, _)| *base == emoji)
+        .map(|(_, variants)| variants)
 }
 
 /// The quick reactions on a message's toolbar.
@@ -304,7 +398,14 @@ pub mod perm {
     /// Change the server's name, description and picture. The owner always can.
     pub const MANAGE_SERVER: u32 = 1 << 7;
     /// Every permission there is.
-    pub const ALL: u32 = MANAGE_CHANNELS | MANAGE_ROLES | MANAGE_MESSAGES | BYPASS_IGNORE | VIEW_CHANNEL | SEND_MESSAGES | ADMINISTRATOR | MANAGE_SERVER;
+    pub const ALL: u32 = MANAGE_CHANNELS
+        | MANAGE_ROLES
+        | MANAGE_MESSAGES
+        | BYPASS_IGNORE
+        | VIEW_CHANNEL
+        | SEND_MESSAGES
+        | ADMINISTRATOR
+        | MANAGE_SERVER;
 }
 
 /// Who a setting is for is decided by the caller. This picks the outcome for one permission: a member's
@@ -327,25 +428,45 @@ pub fn grant(member: Option<Setting>, roles: &[Setting], bit: u32) -> Option<boo
 
 impl ChannelOverride {
     pub fn setting(&self) -> Setting {
-        Setting { view: self.view, send: self.send, manage_channels: self.manage_channels, manage_messages: self.manage_messages }
+        Setting {
+            view: self.view,
+            send: self.send,
+            manage_channels: self.manage_channels,
+            manage_messages: self.manage_messages,
+        }
     }
 }
 
 impl CategoryOverride {
     pub fn setting(&self) -> Setting {
-        Setting { view: self.view, send: self.send, manage_channels: self.manage_channels, manage_messages: self.manage_messages }
+        Setting {
+            view: self.view,
+            send: self.send,
+            manage_channels: self.manage_channels,
+            manage_messages: self.manage_messages,
+        }
     }
 }
 
 impl MemberChannelOverride {
     pub fn setting(&self) -> Setting {
-        Setting { view: self.view, send: self.send, manage_channels: self.manage_channels, manage_messages: self.manage_messages }
+        Setting {
+            view: self.view,
+            send: self.send,
+            manage_channels: self.manage_channels,
+            manage_messages: self.manage_messages,
+        }
     }
 }
 
 impl MemberCategoryOverride {
     pub fn setting(&self) -> Setting {
-        Setting { view: self.view, send: self.send, manage_channels: self.manage_channels, manage_messages: self.manage_messages }
+        Setting {
+            view: self.view,
+            send: self.send,
+            manage_channels: self.manage_channels,
+            manage_messages: self.manage_messages,
+        }
     }
 }
 
@@ -558,7 +679,11 @@ pub enum ClientMsg {
     MoveCategory { category: i64, before: Option<i64> },
     /// Put a channel in a category (or none) before another channel of that group. With `before`
     /// None it goes last in the group.
-    PlaceChannel { channel: i64, category: Option<i64>, before: Option<i64> },
+    PlaceChannel {
+        channel: i64,
+        category: Option<i64>,
+        before: Option<i64>,
+    },
     /// Put a channel in a category, or take it out of its category with `None`.
     MoveChannel { channel: i64, category: Option<i64> },
     /// Create a role at the bottom of the hierarchy. Needs Manage roles, and can only grant
@@ -717,9 +842,14 @@ pub enum ServerMsg {
         server_public: bool,
     },
     /// The server's name or description changed (sent to everyone connected).
-    ServerUpdated { name: String, description: String },
+    ServerUpdated {
+        name: String,
+        description: String,
+    },
     /// The server icon changed (`None` means it was removed).
-    ServerIcon { png_base64: Option<String> },
+    ServerIcon {
+        png_base64: Option<String>,
+    },
     /// This server's public details, for the server list.
     Info {
         /// The server's own id, as in `Welcome`.
@@ -737,20 +867,45 @@ pub enum ServerMsg {
         self_signed: bool,
     },
     /// Addresses of servers this one knows about, including itself.
-    Peers { addrs: Vec<String> },
-    Joined { channel: ChannelRef, history: Vec<ChatMessage> },
-    Message { message: ChatMessage },
+    Peers {
+        addrs: Vec<String>,
+    },
+    Joined {
+        channel: ChannelRef,
+        history: Vec<ChatMessage>,
+    },
+    Message {
+        message: ChatMessage,
+    },
     /// A message in `channel` now has this text.
-    MessageEdited { channel_id: i64, id: i64, text: String },
+    MessageEdited {
+        channel_id: i64,
+        id: i64,
+        text: String,
+    },
     /// A message in `channel` was deleted.
-    MessageDeleted { channel_id: i64, id: i64 },
+    MessageDeleted {
+        channel_id: i64,
+        id: i64,
+    },
     /// The reactions on a message in `channel` now look like this.
-    Reactions { channel_id: i64, id: i64, reactions: Vec<Reaction> },
-    Channels { channels: Vec<ChannelRef> },
+    Reactions {
+        channel_id: i64,
+        id: i64,
+        reactions: Vec<Reaction>,
+    },
+    Channels {
+        channels: Vec<ChannelRef>,
+    },
     /// A channel was deleted. Anyone who had it open moves to another channel.
-    ChannelDeleted { id: i64 },
+    ChannelDeleted {
+        id: i64,
+    },
     /// A channel was renamed. Everyone connected switches to the new name.
-    ChannelRenamed { id: i64, name: String },
+    ChannelRenamed {
+        id: i64,
+        name: String,
+    },
     /// The categories of this server, in order, each with its channels. Sent after every change to
     /// them, and in reply to `ClientMsg::ListChannels`. Channels in no category are not listed.
     /// `uncategorized` lists the channels in no category, in order.
@@ -760,29 +915,63 @@ pub enum ServerMsg {
         uncategorized: Vec<ChannelRef>,
     },
     /// The direct messages this account is part of. `name` is the other member's display name.
-    DirectMessages { list: Vec<DirectMessage> },
+    DirectMessages {
+        list: Vec<DirectMessage>,
+    },
     /// The history of a direct message, as asked for with `ClientMsg::FetchDm`.
-    DmHistory { channel: String, messages: Vec<ChatMessage> },
-    System { channel_id: i64, text: String },
+    DmHistory {
+        channel: String,
+        messages: Vec<ChatMessage>,
+    },
+    System {
+        channel_id: i64,
+        text: String,
+    },
     /// Every member of this server, online or not, with their roles (sent to everyone on change).
-    Presence { users: Vec<UserStatus> },
+    Presence {
+        users: Vec<UserStatus>,
+    },
     /// The roles of this server, highest first. Sent on connect and after every change to them.
-    Roles { roles: Vec<RoleInfo> },
+    Roles {
+        roles: Vec<RoleInfo>,
+    },
     /// The badges of this server. Sent on connect and after every change to them.
-    Badges { badges: Vec<Badge> },
+    Badges {
+        badges: Vec<Badge>,
+    },
     /// Someone else is typing in a channel. Only sent to members who may view it.
-    Typing { channel_id: i64, user: String, name: String },
+    Typing {
+        channel_id: i64,
+        user: String,
+        name: String,
+    },
     /// A member changed their status text. Sent to everyone connected to this server.
-    ProfileStatus { user: String, text: String },
+    ProfileStatus {
+        user: String,
+        text: String,
+    },
     /// Every channel's exceptions for roles. Sent on connect and after every change to them.
-    ChannelOverrides { overrides: Vec<ChannelOverride> },
+    ChannelOverrides {
+        overrides: Vec<ChannelOverride>,
+    },
     /// Every category's permissions for roles (see `CategoryOverride`).
-    CategoryOverrides { overrides: Vec<CategoryOverride> },
+    CategoryOverrides {
+        overrides: Vec<CategoryOverride>,
+    },
     /// Every member's permissions for channels and categories.
-    MemberOverrides { channels: Vec<MemberChannelOverride>, categories: Vec<MemberCategoryOverride> },
+    MemberOverrides {
+        channels: Vec<MemberChannelOverride>,
+        categories: Vec<MemberCategoryOverride>,
+    },
     /// A new message arrived in a channel other than the one you are viewing.
-    Activity { channel_id: i64 },
+    Activity {
+        channel_id: i64,
+    },
     /// Answer to `ClientMsg::RelayDm`. `error` says why the message was not stored.
-    RelayAck { error: Option<String> },
-    Error { text: String },
+    RelayAck {
+        error: Option<String>,
+    },
+    Error {
+        text: String,
+    },
 }
