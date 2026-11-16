@@ -282,6 +282,49 @@ pub struct ChannelOverride {
     pub send: Option<bool>,
 }
 
+/// One role's permission for a category. Setting it sets the same permission on every channel in the
+/// category, and a channel moved into the category takes it on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CategoryOverride {
+    pub category_id: i64,
+    pub role: i64,
+    #[serde(default)]
+    pub view: Option<bool>,
+    #[serde(default)]
+    pub send: Option<bool>,
+}
+
+/// Who a permission is for: a role, or one member by account id.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum Subject {
+    Role(i64),
+    Member(String),
+}
+
+/// One member's permission for a channel. It beats the member's roles for that channel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberChannelOverride {
+    pub channel_id: i64,
+    /// The member's account id.
+    pub member: String,
+    #[serde(default)]
+    pub view: Option<bool>,
+    #[serde(default)]
+    pub send: Option<bool>,
+}
+
+/// One member's permission for a category. Like a role's, it is copied to every channel in the category.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberCategoryOverride {
+    pub category_id: i64,
+    /// The member's account id.
+    pub member: String,
+    #[serde(default)]
+    pub view: Option<bool>,
+    #[serde(default)]
+    pub send: Option<bool>,
+}
+
 /// The longest status text, in characters.
 pub const MAX_STATUS_TEXT_LEN: usize = 60;
 
@@ -379,6 +422,8 @@ pub enum ClientMsg {
     CreateCategory { name: String },
     /// Delete a category. Its channels are kept: they become uncategorized.
     DeleteCategory { category: i64 },
+    /// Rename a category. Its channels stay in it. Needs Manage channels.
+    RenameCategory { category: i64, new_name: String },
     /// Switch to a channel by its id. Used when the channel is picked from a list.
     JoinChannel { id: i64 },
     /// Rename a channel. Its messages and its place in its category move with it.
@@ -441,6 +486,34 @@ pub enum ClientMsg {
     SetChannelOverride {
         channel: i64,
         role: i64,
+        #[serde(default)]
+        view: Option<bool>,
+        #[serde(default)]
+        send: Option<bool>,
+    },
+    /// Set a role's permission for a category, and for every channel in it. `None` for both removes
+    /// it. Needs Manage channels.
+    SetCategoryOverride {
+        category: i64,
+        role: i64,
+        #[serde(default)]
+        view: Option<bool>,
+        #[serde(default)]
+        send: Option<bool>,
+    },
+    /// Set a member's permission for a category, and for every channel in it. Needs Manage channels.
+    SetCategoryMemberOverride {
+        category: i64,
+        member: String,
+        #[serde(default)]
+        view: Option<bool>,
+        #[serde(default)]
+        send: Option<bool>,
+    },
+    /// Set a member's permission for a channel. Needs Manage channels.
+    SetChannelMemberOverride {
+        channel: i64,
+        member: String,
         #[serde(default)]
         view: Option<bool>,
         #[serde(default)]
@@ -563,6 +636,10 @@ pub enum ServerMsg {
     ProfileStatus { user: String, text: String },
     /// Every channel's exceptions for roles. Sent on connect and after every change to them.
     ChannelOverrides { overrides: Vec<ChannelOverride> },
+    /// Every category's permissions for roles (see `CategoryOverride`).
+    CategoryOverrides { overrides: Vec<CategoryOverride> },
+    /// Every member's permissions for channels and categories.
+    MemberOverrides { channels: Vec<MemberChannelOverride>, categories: Vec<MemberCategoryOverride> },
     /// A new message arrived in a channel other than the one you are viewing.
     Activity { channel_id: i64 },
     /// Answer to `ClientMsg::RelayDm`. `error` says why the message was not stored.
