@@ -67,13 +67,20 @@ pub enum AuthRequest {
     /// Ask for the new ids of accounts that had their old id (their name) migrated to a random one.
     /// Used by chat servers to update what they stored under the old ids.
     Migrations { old_ids: Vec<String> },
-    /// Start a login with Discord. `redirect_uri` is where Discord sends the browser back to, which is
-    /// the client's listener on this computer. The reply is the Discord page to open and the `state`
-    /// the callback has to carry back.
-    DiscordStart { redirect_uri: String },
-    /// Finish a login with Discord, with the `code` Discord sent to `redirect_uri`. Logs in to the account
-    /// linked to that Discord account, links a confirmed account with the same email, or creates one.
-    DiscordLogin { code: String, redirect_uri: String },
+    /// Start a login with Discord, or, when `token` is a session, link a Discord account to that account.
+    /// The reply is the Discord page to open and the `state` to pass to `DiscordPoll`.
+    DiscordStart {
+        #[serde(default)]
+        token: String,
+    },
+    /// Ask whether the Discord login with this `state` has finished. Replies `DiscordPending` until the
+    /// browser comes back. Then it completes: `Session` for a login, `DiscordLinked` for a link.
+    DiscordPoll { state: String },
+    /// Set a password on an account that has none, such as one made with Discord. Needs a valid session.
+    SetPassword { token: String, password: String },
+    /// Permanently delete the session's account. Needs the current password, so an account without one
+    /// must set one first. Needs a valid session.
+    DeleteAccount { token: String, password: String },
     /// Ask which outside accounts are linked to the session's account. Needs a valid session.
     LinkedAccounts { token: String },
     /// Remove the link to the session's Discord account. Refused for accounts that have no password,
@@ -81,9 +88,6 @@ pub enum AuthRequest {
     UnlinkDiscord { token: String },
 }
 
-/// The port the client listens on for Discord to send the browser back to. Register
-/// `http://127.0.0.1:<this port>/callback` as a redirect URI in the Discord developer portal.
-pub const DISCORD_CALLBACK_PORT: u16 = 53134;
 
 /// Replies from the auth service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +118,9 @@ pub enum AuthReply {
         /// The profile picture as base64 PNG, or empty for none.
         #[serde(default)]
         avatar: String,
+        /// False for an account made with Discord that has no password yet.
+        #[serde(default)]
+        has_password: bool,
     },
     /// An account's public profile card.
     ProfileCard {
@@ -155,8 +162,16 @@ pub enum AuthReply {
     Migrations { pairs: Vec<(String, String)> },
     /// A sighting was recorded.
     Recorded,
-    /// The Discord page to open, and the state the callback must return with the code.
+    /// The Discord page to open, and the state to poll with.
     DiscordUrl { url: String, state: String },
+    /// The Discord login has not finished yet. Poll again.
+    DiscordPending,
+    /// A Discord account was linked to the session's account. `discord` is its name.
+    DiscordLinked { discord: String },
+    /// The password was set.
+    PasswordSet,
+    /// The account was deleted.
+    AccountDeleted,
     /// The Discord account linked to the session's account, by its display name (None when not linked),
     /// and whether that link can be removed.
     LinkedAccounts { discord: Option<String>, can_unlink_discord: bool },
