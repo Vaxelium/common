@@ -322,7 +322,13 @@ pub struct ChatMessage {
     /// The message this one answers, when it is a reply.
     #[serde(default)]
     pub reply: Option<ReplyRef>,
+    /// True while the message is pinned in its channel.
+    #[serde(default)]
+    pub pinned: bool,
 }
+
+/// The most messages a channel can have pinned at once.
+pub const MAX_PINS: usize = 50;
 
 /// The message a reply answers, as shown above the reply: who wrote it and how it starts. When the
 /// original has been deleted, `author_id` and `text` are empty.
@@ -423,6 +429,8 @@ pub mod perm {
     pub const ADMINISTRATOR: u32 = 1 << 6;
     /// Change the server's name, description and picture. The owner always can.
     pub const MANAGE_SERVER: u32 = 1 << 7;
+    /// Pin and unpin messages. Manage messages also allows it.
+    pub const PIN_MESSAGES: u32 = 1 << 8;
     /// Every permission there is.
     pub const ALL: u32 = MANAGE_CHANNELS
         | MANAGE_ROLES
@@ -431,7 +439,8 @@ pub mod perm {
         | VIEW_CHANNEL
         | SEND_MESSAGES
         | ADMINISTRATOR
-        | MANAGE_SERVER;
+        | MANAGE_SERVER
+        | PIN_MESSAGES;
 }
 
 /// Who a setting is for is decided by the caller. This picks the outcome for one permission: a member's
@@ -669,6 +678,11 @@ pub enum ClientMsg {
     Edit { id: i64, text: String },
     /// Delete one of your own messages.
     Delete { id: i64 },
+    /// Pin a message to its channel, or unpin it. Needs Pin messages or Manage messages, except in a
+    /// direct message.
+    Pin { id: i64, pinned: bool },
+    /// Ask for a channel's pinned messages.
+    ListPins { channel: i64 },
     /// Add your reaction to a message, or take it off if it is already there.
     React { id: i64, emoji: String },
     /// Request the list of channels.
@@ -917,6 +931,17 @@ pub enum ServerMsg {
     MessageDeleted {
         channel_id: i64,
         id: i64,
+    },
+    /// A message was pinned or unpinned.
+    MessagePinned {
+        channel_id: i64,
+        id: i64,
+        pinned: bool,
+    },
+    /// A channel's pinned messages, the most recently pinned first.
+    Pins {
+        channel_id: i64,
+        messages: Vec<ChatMessage>,
     },
     /// The reactions on a message in `channel` now look like this.
     Reactions {
