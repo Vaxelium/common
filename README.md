@@ -20,17 +20,13 @@ repository:
 
 ## Building
 
-Build it from the main repository, because this crate depends on the others by relative
-path and the workspace file lives there:
+This crate builds on its own. Clone it and run:
 
 ```
-git clone --recursive git@github.com:Vaxelium/Vaxelium.git
-cd Vaxelium
-cargo test -p common
+cargo test
 ```
 
-Changing the protocol changes every part of Vaxelium, so keep the auth service, the
-servers and the clients in step when you do.
+The other crates fetch it from this repository's main branch.
 
 ## Licence
 
