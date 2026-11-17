@@ -128,3 +128,38 @@ fn mention_rule_is_tidied_within_limits() {
     assert_eq!(MentionRule::default().max_unique, 5);
     assert!(!MentionRule::default().enabled);
 }
+
+#[test]
+fn mention_rule_defaults_block_and_alert() {
+    let old: AutoMod = serde_json::from_str(r#"{"mentions":{"enabled":true}}"#).unwrap();
+    assert!(old.mentions.block, "an older rule still blocks");
+    assert!(old.mentions.send_alert, "and still alerts");
+    assert!(old.mentions.allowed_roles.is_empty());
+}
+
+#[test]
+fn mention_notice_is_trimmed_and_limited() {
+    let r = AutoMod {
+        mentions: MentionRule {
+            notice: format!("  {}  ", "x".repeat(MAX_NOTICE_LEN + 50)),
+            ..MentionRule::default()
+        },
+        ..AutoMod::default()
+    }
+    .tidied();
+    assert_eq!(r.mentions.notice.len(), MAX_NOTICE_LEN);
+    assert!(MentionRule::default().notice.is_empty());
+}
+
+#[test]
+fn name_notice_is_trimmed_and_limited() {
+    let r = AutoMod {
+        names: NameRule {
+            notice: format!("  {}  ", "n".repeat(MAX_NOTICE_LEN + 9)),
+            ..NameRule::default()
+        },
+        ..AutoMod::default()
+    }
+    .tidied();
+    assert_eq!(r.names.notice.len(), MAX_NOTICE_LEN);
+}

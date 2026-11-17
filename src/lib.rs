@@ -367,6 +367,25 @@ pub struct MentionRule {
     /// How long a member who breaks this rule may not send messages, in seconds. Zero means no timeout.
     #[serde(default)]
     pub timeout_secs: u64,
+    /// Refuse a message that breaks the rule. Off, the message goes through and only the alert and timeout apply.
+    #[serde(default = "default_true")]
+    pub block: bool,
+    /// Post a report to AutoMod's channel when the rule catches a message.
+    #[serde(default = "default_true")]
+    pub send_alert: bool,
+    /// Roles whose holders the rule leaves alone.
+    #[serde(default)]
+    pub allowed_roles: Vec<i64>,
+    /// The notice a member sees when their message is blocked. Empty means the standard reason.
+    #[serde(default)]
+    pub notice: String,
+}
+
+/// The longest custom notice a blocked member may be shown.
+pub const MAX_NOTICE_LEN: usize = 200;
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_max_mentions() -> u32 {
@@ -380,6 +399,10 @@ impl Default for MentionRule {
             max_unique: default_max_mentions(),
             raid_detection: false,
             timeout_secs: 0,
+            block: true,
+            send_alert: true,
+            allowed_roles: Vec::new(),
+            notice: String::new(),
         }
     }
 }
@@ -436,6 +459,9 @@ pub struct NameRule {
     /// Roles whose holders the rule leaves alone.
     #[serde(default)]
     pub allowed_roles: Vec<i64>,
+    /// The notice a member sees when their name blocks them. Empty means the standard notice.
+    #[serde(default)]
+    pub notice: String,
 }
 
 impl NameRule {
@@ -484,10 +510,14 @@ impl AutoMod {
     pub fn tidied(mut self) -> Self {
         self.blocked_words = tidy_words(self.blocked_words);
         self.names.words = tidy_words(self.names.words);
+        self.names.notice = self.names.notice.trim().chars().take(MAX_NOTICE_LEN).collect();
         self.names.allowed_roles.sort_unstable();
         self.names.allowed_roles.dedup();
         self.mentions.max_unique = self.mentions.max_unique.clamp(1, MAX_MENTIONS_LIMIT);
         self.mentions.timeout_secs = self.mentions.timeout_secs.min(MAX_TIMEOUT_SECS);
+        self.mentions.notice = self.mentions.notice.trim().chars().take(MAX_NOTICE_LEN).collect();
+        self.mentions.allowed_roles.sort_unstable();
+        self.mentions.allowed_roles.dedup();
         if let Some(channel) = self.names.old_alert_channel.take() {
             if self.alert_channel.is_none() {
                 self.alert_channel = Some(channel);
