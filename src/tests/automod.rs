@@ -89,3 +89,77 @@ fn an_old_name_alert_channel_becomes_the_automod_channel() {
     assert!(saved["names"].get("alert_channel").is_none());
     assert_eq!(saved["alert_channel"], 7);
 }
+
+#[test]
+fn mentions_are_counted_once_each() {
+    let members = vec!["bob".to_string(), "bobby".to_string()];
+    let roles = vec!["Admins".to_string()];
+    assert_eq!(mentioned_count("hi @bob and @bob again", &members, &roles), 1);
+    assert_eq!(
+        mentioned_count("@bobby is not @bob", &members, &roles),
+        2,
+        "a longer name is its own mention"
+    );
+    assert_eq!(
+        mentioned_count("@Admins and @bob", &members, &roles),
+        2,
+        "roles count too"
+    );
+    assert_eq!(
+        mentioned_count("bob and @bobs", &members, &roles),
+        0,
+        "needs the @ and a whole name"
+    );
+}
+
+#[test]
+fn mention_rule_is_tidied_within_limits() {
+    let r = AutoMod {
+        mentions: MentionRule {
+            max_unique: 0,
+            timeout_secs: u64::MAX,
+            ..MentionRule::default()
+        },
+        ..AutoMod::default()
+    }
+    .tidied();
+    assert_eq!(r.mentions.max_unique, 1);
+    assert_eq!(r.mentions.timeout_secs, MAX_TIMEOUT_SECS);
+    assert_eq!(MentionRule::default().max_unique, 5);
+    assert!(!MentionRule::default().enabled);
+}
+
+#[test]
+fn mention_rule_defaults_block_and_alert() {
+    let old: AutoMod = serde_json::from_str(r#"{"mentions":{"enabled":true}}"#).unwrap();
+    assert!(old.mentions.block, "an older rule still blocks");
+    assert!(old.mentions.send_alert, "and still alerts");
+    assert!(old.mentions.allowed_roles.is_empty());
+}
+
+#[test]
+fn mention_notice_is_trimmed_and_limited() {
+    let r = AutoMod {
+        mentions: MentionRule {
+            notice: format!("  {}  ", "x".repeat(MAX_NOTICE_LEN + 50)),
+            ..MentionRule::default()
+        },
+        ..AutoMod::default()
+    }
+    .tidied();
+    assert_eq!(r.mentions.notice.len(), MAX_NOTICE_LEN);
+    assert!(MentionRule::default().notice.is_empty());
+}
+
+#[test]
+fn name_notice_is_trimmed_and_limited() {
+    let r = AutoMod {
+        names: NameRule {
+            notice: format!("  {}  ", "n".repeat(MAX_NOTICE_LEN + 9)),
+            ..NameRule::default()
+        },
+        ..AutoMod::default()
+    }
+    .tidied();
+    assert_eq!(r.names.notice.len(), MAX_NOTICE_LEN);
+}
