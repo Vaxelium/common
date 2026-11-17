@@ -347,6 +347,71 @@ pub struct AutoMod {
     /// The channel AutoMod reports to: every time it blocks something, and when it flags a name.
     #[serde(default)]
     pub alert_channel: Option<i64>,
+    /// The rule for mentions: how many people and roles one message may ping.
+    #[serde(default)]
+    pub mentions: MentionRule,
+}
+
+/// Limits the people and roles a message may mention, and what happens to members who break it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MentionRule {
+    /// Refuse messages that mention more than `max_unique` different members or roles.
+    #[serde(default)]
+    pub enabled: bool,
+    /// The most different members and roles one message may mention.
+    #[serde(default = "default_max_mentions")]
+    pub max_unique: u32,
+    /// Refuse a member who mentions `RAID_MENTIONS` or more people in `RAID_WINDOW_SECS`, across their messages.
+    #[serde(default)]
+    pub raid_detection: bool,
+    /// How long a member who breaks this rule may not send messages, in seconds. Zero means no timeout.
+    #[serde(default)]
+    pub timeout_secs: u64,
+}
+
+fn default_max_mentions() -> u32 {
+    5
+}
+
+impl Default for MentionRule {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_unique: default_max_mentions(),
+            raid_detection: false,
+            timeout_secs: 0,
+        }
+    }
+}
+
+/// The most mentions one message may be limited to, and the longest timeout AutoMod may give.
+pub const MAX_MENTIONS_LIMIT: u32 = 50;
+pub const MAX_TIMEOUT_SECS: u64 = 7 * 24 * 60 * 60;
+/// Mentions across a member's messages that make a raid, and the window they must fall in.
+pub const RAID_MENTIONS: usize = 20;
+pub const RAID_WINDOW_SECS: u64 = 30;
+
+/// The members and roles `text` mentions, counted once each. A mention is `@` followed by a name
+/// that ends the word, as the client shows them.
+pub fn mentioned_count(text: &str, members: &[String], roles: &[String]) -> usize {
+    let mut found: Vec<&str> = Vec::new();
+    for name in members.iter().chain(roles.iter()) {
+        if name.is_empty() {
+            continue;
+        }
+        let needle = format!("@{name}");
+        let mut from = 0;
+        while let Some(at) = text[from..].find(&needle) {
+            let end = from + at + needle.len();
+            let next = text[end..].chars().next();
+            let whole = !next.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '-');
+            if whole && !found.contains(&name.as_str()) {
+                found.push(name.as_str());
+            }
+            from = end;
+        }
+    }
+    found.len()
 }
 
 /// Flags members whose names contain a listed word, and says what to do about them. Members with
@@ -421,6 +486,8 @@ impl AutoMod {
         self.names.words = tidy_words(self.names.words);
         self.names.allowed_roles.sort_unstable();
         self.names.allowed_roles.dedup();
+        self.mentions.max_unique = self.mentions.max_unique.clamp(1, MAX_MENTIONS_LIMIT);
+        self.mentions.timeout_secs = self.mentions.timeout_secs.min(MAX_TIMEOUT_SECS);
         if let Some(channel) = self.names.old_alert_channel.take() {
             if self.alert_channel.is_none() {
                 self.alert_channel = Some(channel);
