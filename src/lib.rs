@@ -381,6 +381,9 @@ pub struct AutoMod {
     /// The rule for flagged words: built-in word lists, chosen by category, plus the server's own allowances.
     #[serde(default)]
     pub flagged: FlaggedWords,
+    /// The rule for filtered words: regular expressions a message may not match, and repeated characters.
+    #[serde(default)]
+    pub filtered: FilteredWords,
 }
 
 /// Refuses messages that contain words from the chosen built-in lists, less any words the server allows.
@@ -1040,6 +1043,135 @@ impl FlaggedWords {
     }
 }
 
+/// Refuses messages that match one of the patterns, or that repeat a character too many times in a row.
+/// Patterns are regular expressions. Add `(?i)` to a pattern to ignore case; without it, case matters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FilteredWords {
+    /// Whether the rule is on at all.
+    #[serde(default)]
+    pub enabled: bool,
+    /// The regular expressions a message may not match.
+    #[serde(default = "default_patterns")]
+    pub patterns: Vec<String>,
+    /// Refuse a message with `repeated_limit` or more of the same character in a row, ignoring case.
+    #[serde(default)]
+    pub repeated_chars: bool,
+    /// How many of the same character in a row count as repeated, from `MIN_REPEATED` to `MAX_REPEATED`.
+    #[serde(default = "default_repeated_limit")]
+    pub repeated_limit: u32,
+    /// Refuse a message that matches. Off, the message goes through and only the alert applies.
+    #[serde(default = "default_true")]
+    pub block: bool,
+    /// Post a report to AutoMod's channel when the rule catches a message.
+    #[serde(default = "default_true")]
+    pub send_alert: bool,
+    /// The notice a member sees when their message is blocked. Empty means the standard reason.
+    #[serde(default)]
+    pub notice: String,
+    /// Roles and channels the rule leaves alone. Members with Manage Server are always left alone.
+    #[serde(default)]
+    pub allowed_roles: Vec<i64>,
+    #[serde(default)]
+    pub allowed_channels: Vec<i64>,
+}
+
+/// Common patterns a server can add to its filter with one press. Each is a regular expression.
+pub const PRESET_FILTERS: &[(&str, &str)] = &[
+    ("URLs", r"(?i)https?://[^\s]+"),
+    ("Mentions", r"(?i)<@!?[0-9]+>"),
+    ("Invite links", r"(?i)(discord\.gg/[^\s]+|discord\.com/invite/[^\s]+)"),
+    ("Caps spam", r"[A-Z]{5,}"),
+];
+
+/// How many of the same character in a row count as repeated: the default, and the least and most a rule may use.
+pub const REPEATED_CHARS: usize = 5;
+pub const MIN_REPEATED: u32 = 2;
+pub const MAX_REPEATED: u32 = 50;
+
+fn default_repeated_limit() -> u32 {
+    REPEATED_CHARS as u32
+}
+/// The most patterns a filter may have, and the longest one.
+pub const MAX_FILTER_PATTERNS: usize = 50;
+pub const MAX_FILTER_PATTERN_LEN: usize = 200;
+
+fn default_patterns() -> Vec<String> {
+    PRESET_FILTERS.iter().map(|(_, pattern)| (*pattern).to_string()).collect()
+}
+
+impl Default for FilteredWords {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            patterns: default_patterns(),
+            repeated_chars: false,
+            repeated_limit: default_repeated_limit(),
+            block: true,
+            send_alert: true,
+            notice: String::new(),
+            allowed_roles: Vec::new(),
+            allowed_channels: Vec::new(),
+        }
+    }
+}
+
+impl FilteredWords {
+    /// The text a message matched, or None when it matches nothing or the rule is off. A pattern that does not
+    /// compile matches nothing.
+    pub fn find(&self, text: &str) -> Option<String> {
+        if !self.enabled {
+            return None;
+        }
+        for pattern in &self.patterns {
+            if let Ok(re) = regex::Regex::new(pattern) {
+                if let Some(found) = re.find(text) {
+                    return Some(found.as_str().to_string());
+                }
+            }
+        }
+        if self.repeated_chars {
+            return repeated_run(text, self.repeated_limit as usize);
+        }
+        None
+    }
+}
+
+/// The first run of `at_least` or more of one character in a row in `text`, ignoring case, or None.
+pub fn repeated_run(text: &str, at_least: usize) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut start = 0;
+    while start < chars.len() {
+        let first = chars[start].to_lowercase().next();
+        let mut end = start + 1;
+        while end < chars.len() && chars[end].to_lowercase().next() == first {
+            end += 1;
+        }
+        if end - start >= at_least {
+            return Some(chars[start..end].iter().collect());
+        }
+        start = end;
+    }
+    None
+}
+
+/// Whether `pattern` is a regular expression a filter can use.
+pub fn valid_pattern(pattern: &str) -> bool {
+    !pattern.trim().is_empty() && regex::Regex::new(pattern.trim()).is_ok()
+}
+
+/// Patterns as given, tidied: trimmed, without blanks or repeats, within the limits, and only those that compile.
+fn tidy_patterns(list: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for p in list {
+        let p: String = p.trim().chars().take(MAX_FILTER_PATTERN_LEN).collect();
+        if !p.is_empty() && !out.contains(&p) && regex::Regex::new(&p).is_ok() {
+            out.push(p);
+        }
+    }
+    out.truncate(MAX_FILTER_PATTERNS);
+    out
+}
+
 /// Limits the people and roles a message may mention, and what happens to members who break it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MentionRule {
@@ -1220,6 +1352,13 @@ impl AutoMod {
         self.flagged.allowed_roles.dedup();
         self.flagged.allowed_channels.sort_unstable();
         self.flagged.allowed_channels.dedup();
+        self.filtered.patterns = tidy_patterns(self.filtered.patterns);
+        self.filtered.repeated_limit = self.filtered.repeated_limit.clamp(MIN_REPEATED, MAX_REPEATED);
+        self.filtered.notice = self.filtered.notice.trim().chars().take(MAX_NOTICE_LEN).collect();
+        self.filtered.allowed_roles.sort_unstable();
+        self.filtered.allowed_roles.dedup();
+        self.filtered.allowed_channels.sort_unstable();
+        self.filtered.allowed_channels.dedup();
         if let Some(channel) = self.names.old_alert_channel.take() {
             if self.alert_channel.is_none() {
                 self.alert_channel = Some(channel);
