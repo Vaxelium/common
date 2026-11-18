@@ -298,3 +298,91 @@ fn old_rules_read_insults_slurs_as_general_insults() {
     assert!(old.general_insults && old.enabled);
     assert!(!old.identity_slurs, "identity slurs are a category of their own now");
 }
+
+fn filtered(patterns: &[&str]) -> FilteredWords {
+    FilteredWords {
+        enabled: true,
+        patterns: patterns.iter().map(|p| p.to_string()).collect(),
+        ..FilteredWords::default()
+    }
+}
+
+#[test]
+fn default_filters_are_the_presets() {
+    let f = FilteredWords {
+        enabled: true,
+        ..FilteredWords::default()
+    };
+    assert_eq!(f.find("see https://example.com now").as_deref(), Some("https://example.com"));
+    assert_eq!(f.find("hi <@!12345> there").as_deref(), Some("<@!12345>"));
+    assert_eq!(f.find("join discord.gg/abc").as_deref(), Some("discord.gg/abc"));
+    assert_eq!(f.find("LOUD SHOUTING").as_deref(), Some("SHOUTING"));
+    assert!(f.find("quiet and tidy").is_none());
+}
+
+#[test]
+fn case_follows_the_pattern() {
+    assert!(filtered(&["(?i)https?://"]).find("HTTPS://X").is_some());
+    assert!(filtered(&["[A-Z]{5,}"]).find("hello").is_none(), "no flag ignores case");
+    assert!(filtered(&["[A-Z]{5,}"]).find("HELLO").is_some());
+}
+
+#[test]
+fn repeated_characters_are_found_by_hand() {
+    let f = FilteredWords {
+        enabled: true,
+        patterns: vec![],
+        repeated_chars: true,
+        ..FilteredWords::default()
+    };
+    assert_eq!(f.find("nooooooo").as_deref(), Some("ooooooo"));
+    assert_eq!(f.find("AAAAAhh").as_deref(), Some("AAAAA"), "ignores case");
+    assert!(f.find("noooo wait").is_none(), "four in a row is fine");
+}
+
+#[test]
+fn off_rules_and_bad_patterns_match_nothing() {
+    let off = FilteredWords {
+        enabled: false,
+        ..filtered(&["hello"])
+    };
+    assert!(off.find("hello").is_none());
+    assert!(filtered(&["("]).find("hello").is_none(), "a pattern that does not compile matches nothing");
+}
+
+#[test]
+fn filtered_rule_is_tidied() {
+    let r = AutoMod {
+        filtered: FilteredWords {
+            patterns: vec!["  foo ".into(), "foo".into(), "(".into(), "".into()],
+            allowed_roles: vec![2, 1, 2],
+            ..FilteredWords::default()
+        },
+        ..AutoMod::default()
+    }
+    .tidied();
+    assert_eq!(r.filtered.patterns, vec!["foo".to_string()]);
+    assert_eq!(r.filtered.allowed_roles, vec![1, 2]);
+}
+
+#[test]
+fn repeated_limit_is_the_rule_setting() {
+    let f = FilteredWords {
+        enabled: true,
+        patterns: vec![],
+        repeated_chars: true,
+        repeated_limit: 3,
+        ..FilteredWords::default()
+    };
+    assert_eq!(f.find("baaad").as_deref(), Some("aaa"), "three in a row is enough at 3");
+    assert!(f.find("noo").is_none(), "two is not");
+    let r = AutoMod {
+        filtered: FilteredWords {
+            repeated_limit: 500,
+            ..FilteredWords::default()
+        },
+        ..AutoMod::default()
+    }
+    .tidied();
+    assert_eq!(r.filtered.repeated_limit, MAX_REPEATED, "clamped to the most allowed");
+}
