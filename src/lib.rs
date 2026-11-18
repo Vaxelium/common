@@ -350,6 +350,666 @@ pub struct AutoMod {
     /// The rule for mentions: how many people and roles one message may ping.
     #[serde(default)]
     pub mentions: MentionRule,
+    /// The rule for flagged words: built-in word lists, chosen by category, plus the server's own allowances.
+    #[serde(default)]
+    pub flagged: FlaggedWords,
+}
+
+/// Refuses messages that contain words from the chosen built-in lists, less any words the server allows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlaggedWords {
+    /// Whether the rule is on at all.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Which categories of built-in list the rule uses. A category is one of `ModerationCategory`.
+    #[serde(default)]
+    pub severe_profanity: bool,
+    #[serde(default)]
+    pub mild_profanity: bool,
+    /// Older rules called this `insults_slurs`; it is read under that name too.
+    #[serde(default, alias = "insults_slurs")]
+    pub general_insults: bool,
+    #[serde(default)]
+    pub identity_slurs: bool,
+    #[serde(default)]
+    pub sexual_content: bool,
+    #[serde(default)]
+    pub sexual_harassment: bool,
+    #[serde(default)]
+    pub threats: bool,
+    #[serde(default)]
+    pub spam: bool,
+    /// Words and phrases the server allows even though a list has them. Matched like the blocked words.
+    #[serde(default)]
+    pub allow: Vec<String>,
+    /// Refuse a message that contains a flagged word. Off, the message goes through and only the alert applies.
+    #[serde(default = "default_true")]
+    pub block: bool,
+    /// Post a report to AutoMod's channel when the rule catches a message.
+    #[serde(default = "default_true")]
+    pub send_alert: bool,
+    /// The notice a member sees when their message is blocked. Empty means the standard reason.
+    #[serde(default)]
+    pub notice: String,
+    /// Roles and channels the rule leaves alone. Members with Manage Server are always left alone.
+    #[serde(default)]
+    pub allowed_roles: Vec<i64>,
+    #[serde(default)]
+    pub allowed_channels: Vec<i64>,
+}
+
+impl Default for FlaggedWords {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            severe_profanity: false,
+            mild_profanity: false,
+            general_insults: false,
+            identity_slurs: false,
+            sexual_content: false,
+            sexual_harassment: false,
+            threats: false,
+            spam: false,
+            allow: Vec::new(),
+            block: true,
+            send_alert: true,
+            notice: String::new(),
+            allowed_roles: Vec::new(),
+            allowed_channels: Vec::new(),
+        }
+    }
+}
+
+/// The kinds of language the flagged words rule knows about. Each has its own list and a severity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModerationCategory {
+    SevereProfanity,
+    MildProfanity,
+    GeneralInsults,
+    IdentityBasedSlurs,
+    SexualContent,
+    SexualHarassment,
+    Threats,
+    Spam,
+}
+
+/// How serious a flagged word is. Higher is worse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModerationSeverity {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+impl ModerationCategory {
+    /// Every category, in the order the rule's page shows them.
+    pub const ALL: [ModerationCategory; 8] = [
+        ModerationCategory::SevereProfanity,
+        ModerationCategory::MildProfanity,
+        ModerationCategory::GeneralInsults,
+        ModerationCategory::IdentityBasedSlurs,
+        ModerationCategory::SexualContent,
+        ModerationCategory::SexualHarassment,
+        ModerationCategory::Threats,
+        ModerationCategory::Spam,
+    ];
+
+    /// The words this category's list holds.
+    pub fn words(self) -> &'static [&'static str] {
+        match self {
+            ModerationCategory::SevereProfanity => SEVERE_PROFANITY_WORDS,
+            ModerationCategory::MildProfanity => MILD_PROFANITY_WORDS,
+            ModerationCategory::GeneralInsults => GENERAL_INSULTS_WORDS,
+            ModerationCategory::IdentityBasedSlurs => IDENTITY_SLURS_WORDS,
+            ModerationCategory::SexualContent => SEXUAL_CONTENT_WORDS,
+            ModerationCategory::SexualHarassment => SEXUAL_HARASSMENT_WORDS,
+            ModerationCategory::Threats => THREATS_WORDS,
+            ModerationCategory::Spam => SPAM_WORDS,
+        }
+    }
+
+    /// How serious a match in this category is.
+    pub fn severity(self) -> ModerationSeverity {
+        match self {
+            ModerationCategory::MildProfanity | ModerationCategory::Spam => ModerationSeverity::Low,
+            ModerationCategory::GeneralInsults | ModerationCategory::SexualContent => ModerationSeverity::Medium,
+            ModerationCategory::SevereProfanity | ModerationCategory::SexualHarassment => ModerationSeverity::High,
+            ModerationCategory::IdentityBasedSlurs | ModerationCategory::Threats => ModerationSeverity::Critical,
+        }
+    }
+
+    /// The name shown for the category, lower-cased, as used in reports.
+    pub fn name(self) -> &'static str {
+        match self {
+            ModerationCategory::SevereProfanity => "severe profanity",
+            ModerationCategory::MildProfanity => "mild profanity",
+            ModerationCategory::GeneralInsults => "insults",
+            ModerationCategory::IdentityBasedSlurs => "identity-based slurs",
+            ModerationCategory::SexualContent => "sexual content",
+            ModerationCategory::SexualHarassment => "sexual harassment",
+            ModerationCategory::Threats => "threats",
+            ModerationCategory::Spam => "spam",
+        }
+    }
+}
+
+/// What the flagged words rule found in a message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Flag {
+    /// The listed word or phrase that matched.
+    pub word: String,
+    pub category: ModerationCategory,
+    pub severity: ModerationSeverity,
+}
+
+/// The built-in word lists, one for each `ModerationCategory` (see `ModerationCategory::words`). They are a
+/// starting point, and a server can allow any word in them. An entry is a base word: its plural forms are
+/// matched too, and the spelling tricks that `fold_word` undoes. A phrase matches its words in order.
+
+/// Severe profanity: the strongest swear words.
+pub const SEVERE_PROFANITY_WORDS: &[&str] = &[
+    "fuck",
+    "fucking",
+    "fucked",
+    "fucker",
+    "fuckers",
+    "fuckface",
+    "fuckhead",
+    "fuckwit",
+    "motherfucker",
+    "motherfuckers",
+    "motherfucking",
+    "shit",
+    "shits",
+    "shitty",
+    "shithead",
+    "shitface",
+    "bullshit",
+    "horseshit",
+    "dipshit",
+    "shitbag",
+    "shitshow",
+    "shitstorm",
+    "shitstain",
+    "cunt",
+    "cunts",
+    "cunting",
+    "asshole",
+    "assholes",
+    "arsehole",
+    "arseholes",
+    "bastard",
+    "bastards",
+    "bitch",
+    "bitches",
+    "bitching",
+    "sonofabitch",
+    "dick",
+    "dicks",
+    "dickhead",
+    "dickheads",
+    "dickwad",
+    "dickweed",
+    "prick",
+    "pricks",
+    "wanker",
+    "wankers",
+    "wank",
+    "wanking",
+    "twat",
+    "twats",
+    "tosser",
+    "tossers",
+    "bellend",
+    "bellends",
+    "knob",
+    "knobhead",
+    "knobheads",
+    "pillock",
+    "cocksucker",
+    "cocksuckers",
+    "cockhead",
+    "cockwomble",
+    "fuck off",
+    "fuck you",
+    "fuck this",
+    "fuck that",
+    "fuck sake",
+    "for fuck sake",
+    "what the fuck",
+    "who the fuck",
+    "holy shit",
+    "piece of shit",
+    "full of shit",
+    "eat shit",
+    "kiss my ass",
+    "up yours",
+    "shut the fuck up",
+    "go fuck yourself",
+    "son of a bitch",
+];
+
+/// Mild profanity: swearing that many communities allow.
+pub const MILD_PROFANITY_WORDS: &[&str] = &[
+    "bollocks",
+    "bugger",
+    "buggered",
+    "git",
+    "piss",
+    "pissed",
+    "pisser",
+    "pisshead",
+    "piss off",
+    "pissflaps",
+    "goddamn",
+    "goddammit",
+    "damn",
+    "dammit",
+    "hell",
+    "crap",
+    "crappy",
+    "crapper",
+    "bollocking",
+    "buggery",
+];
+
+/// General insults and put-downs, not aimed at an identity.
+pub const GENERAL_INSULTS_WORDS: &[&str] = &[
+    "idiot",
+    "idiots",
+    "idiotic",
+    "moron",
+    "morons",
+    "moronic",
+    "imbecile",
+    "imbeciles",
+    "dumbass",
+    "dumbasses",
+    "dumbfuck",
+    "dumbfucks",
+    "stupid",
+    "stupidity",
+    "loser",
+    "losers",
+    "clown",
+    "clowns",
+    "jerk",
+    "jerks",
+    "dork",
+    "dorks",
+    "nitwit",
+    "nitwits",
+    "halfwit",
+    "halfwits",
+    "numbskull",
+    "numbskulls",
+    "scumbag",
+    "scumbags",
+    "degenerate",
+    "degenerates",
+    "dipstick",
+    "bonehead",
+    "airhead",
+    "blockhead",
+    "meathead",
+    "lowlife",
+    "low life",
+    "douche",
+    "douchebag",
+    "douchebags",
+    "jackass",
+    "jackasses",
+    "asshat",
+    "assclown",
+    "tool",
+    "buffoon",
+    "fool",
+    "creep",
+    "creeps",
+    "weirdo",
+    "weirdos",
+    "psycho",
+    "lunatic",
+    "coward",
+    "cowards",
+    "pathetic",
+    "worthless",
+    "disgusting",
+    "vile",
+    "garbage human",
+    "waste of space",
+    "piece of garbage",
+    "piece of trash",
+    "incompetent",
+    "ignoramus",
+    "dipshit",
+    "shithead",
+    "twit",
+    "cretin",
+    "simpleton",
+    "ugly",
+    "fatass",
+    "skinny freak",
+    "failure",
+    "nobody",
+    "nuisance",
+    "parasite",
+    "leech",
+    "attention seeker",
+    "clueless idiot",
+    "absolute moron",
+    "complete idiot",
+    "stupid prick",
+    "worthless idiot",
+    "pathetic loser",
+];
+
+/// Identity-based slurs, such as ableist terms.
+pub const IDENTITY_SLURS_WORDS: &[&str] = &[
+    "retard",
+    "retarded",
+    "retards",
+    "spastic",
+    "spaz",
+    "spazzy",
+];
+
+/// Sexually explicit content: adult sites, nudity and sexual acts.
+pub const SEXUAL_CONTENT_WORDS: &[&str] = &[
+    "porn",
+    "porno",
+    "pornography",
+    "pornographic",
+    "pornhub",
+    "xxx",
+    "nsfw",
+    "adult content",
+    "adult video",
+    "adult film",
+    "hentai",
+    "rule34",
+    "r34",
+    "onlyfans",
+    "fansly",
+    "erotica",
+    "erotic",
+    "sexually explicit",
+    "nude",
+    "nudes",
+    "nudity",
+    "naked",
+    "topless",
+    "bottomless",
+    "undressed",
+    "striptease",
+    "stripping",
+    "flash me",
+    "sexting",
+    "horny",
+    "aroused",
+    "masturbation",
+    "masturbate",
+    "masturbating",
+    "orgasm",
+    "orgasms",
+    "climax",
+    "blowjob",
+    "blow job",
+    "handjob",
+    "hand job",
+    "footjob",
+    "foot job",
+    "rimjob",
+    "rim job",
+    "deepthroat",
+    "deep throat",
+    "fingering",
+    "foreplay",
+    "intercourse",
+    "penetration",
+    "ejaculation",
+    "ejaculate",
+    "cum",
+    "cumming",
+    "cumshot",
+    "semen",
+    "sperm",
+    "dildo",
+    "vibrator",
+    "anal sex",
+    "oral sex",
+    "threesome",
+    "orgy",
+    "gangbang",
+    "facial",
+    "penis",
+    "vagina",
+    "vulva",
+    "clitoris",
+    "testicles",
+    "ballsack",
+    "scrotum",
+    "breasts",
+    "boobs",
+    "tits",
+    "nipples",
+    "buttocks",
+    "ass",
+    "booty",
+];
+
+/// Sexual harassment: propositions and demands aimed at someone.
+pub const SEXUAL_HARASSMENT_WORDS: &[&str] = &[
+    "send nudes",
+    "show me your body",
+    "show me your tits",
+    "show me your ass",
+    "wanna fuck",
+    "let's have sex",
+    "come over and fuck",
+    "send me pictures",
+    "get naked",
+    "take your clothes off",
+];
+
+/// Threats of harm to a person.
+pub const THREATS_WORDS: &[&str] = &[
+    "i will kill you",
+    "i'll kill you",
+    "kill yourself",
+    "i will hurt you",
+    "i'll hurt you",
+    "i will find you",
+    "i know where you live",
+    "hope you die",
+    "you should die",
+    "go die",
+    "shoot you",
+    "stab you",
+    "beat you up",
+    "i will end you",
+];
+
+/// Spam: scams and giveaways.
+pub const SPAM_WORDS: &[&str] = &[
+    "free nitro",
+    "free robux",
+    "claim your prize",
+    "claim your reward",
+    "you have won",
+    "limited time offer",
+    "click this link",
+    "crypto giveaway",
+    "dm me for profit",
+    "guaranteed profit",
+];
+
+/// Words that often appear innocently. These are flagged only when addressed to someone (`you ass`).
+pub const AMBIGUOUS_WORDS: &[&str] = &[
+    "ass",
+    "cum",
+    "hell",
+    "nude",
+    "xxx",
+    "damn",
+    "git",
+    "tool",
+    "fool",
+    "nobody",
+    "booty",
+    "facial",
+    "climax",
+    "naked",
+    "penetration",
+    "intercourse",
+    "foreplay",
+    "bugger",
+    "bollocks",
+];
+
+/// Words that address someone, for the context rule: `you ass` and `your hell` are addressed; `hell of a game`
+/// is not.
+const ADDRESSING_WORDS: &[&str] = &["you", "your", "u", "ur", "yo", "ya", "ye", "youre"];
+
+/// How a word is folded before it is compared: lower-cased, leetspeak characters put back (`sh1t` is `shit`,
+/// `@` is `a`), anything that is not a letter dropped (`f.u.c.k` is `fuck`), and each run of the same letter
+/// shortened to one (`shiiit` is `shit`). Words in the lists and the text go through the same folding.
+pub fn fold_word(word: &str) -> String {
+    let mut out = String::new();
+    for c in word.to_lowercase().chars() {
+        let c = match c {
+            '0' => 'o',
+            '1' => 'i',
+            '3' => 'e',
+            '4' | '@' => 'a',
+            '5' | '$' => 's',
+            '7' | '+' => 't',
+            other => other,
+        };
+        if c.is_alphabetic() && out.chars().last() != Some(c) {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// A phrase folded word by word, so the spaces between words are kept (`piss off` stays `piss off`).
+pub fn fold_phrase(phrase: &str) -> String {
+    phrase
+        .split_whitespace()
+        .map(fold_word)
+        .filter(|w| !w.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The words of a message, folded, with a run of single letters joined back into one word, so `s h i t` is
+/// one word.
+fn text_words(text: &str) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    let mut in_letter_run = false;
+    for raw in text.split_whitespace() {
+        let folded = fold_word(raw);
+        if folded.is_empty() {
+            continue;
+        }
+        let single = folded.chars().count() == 1;
+        match words.last_mut() {
+            Some(last) if single && in_letter_run => *last = fold_word(&format!("{last}{folded}")),
+            _ => words.push(folded),
+        }
+        in_letter_run = single;
+    }
+    words
+}
+
+/// Whether a context word in `words` is addressed to someone: it follows a word such as `you` or `your`.
+fn addressed(words: &[String], base: &str) -> bool {
+    words.iter().enumerate().any(|(i, w)| {
+        i > 0
+            && ADDRESSING_WORDS.contains(&words[i - 1].as_str())
+            && (w == base || *w == format!("{base}s") || *w == format!("{base}es"))
+    })
+}
+
+impl FlaggedWords {
+    /// Whether a category is switched on.
+    pub fn is_on(&self, category: ModerationCategory) -> bool {
+        match category {
+            ModerationCategory::SevereProfanity => self.severe_profanity,
+            ModerationCategory::MildProfanity => self.mild_profanity,
+            ModerationCategory::GeneralInsults => self.general_insults,
+            ModerationCategory::IdentityBasedSlurs => self.identity_slurs,
+            ModerationCategory::SexualContent => self.sexual_content,
+            ModerationCategory::SexualHarassment => self.sexual_harassment,
+            ModerationCategory::Threats => self.threats,
+            ModerationCategory::Spam => self.spam,
+        }
+    }
+
+    /// Switches a category on or off.
+    pub fn set(&mut self, category: ModerationCategory, on: bool) {
+        match category {
+            ModerationCategory::SevereProfanity => self.severe_profanity = on,
+            ModerationCategory::MildProfanity => self.mild_profanity = on,
+            ModerationCategory::GeneralInsults => self.general_insults = on,
+            ModerationCategory::IdentityBasedSlurs => self.identity_slurs = on,
+            ModerationCategory::SexualContent => self.sexual_content = on,
+            ModerationCategory::SexualHarassment => self.sexual_harassment = on,
+            ModerationCategory::Threats => self.threats = on,
+            ModerationCategory::Spam => self.spam = on,
+        }
+    }
+
+    /// The flag `text` raises, or None when it raises none, or the rule is off. A word that is on its own in a
+    /// list is always flagged. A context word (see `AMBIGUOUS_WORDS`) is flagged only when it is addressed to
+    /// someone. When several match, the most severe is returned.
+    pub fn flags(&self, text: &str) -> Option<Flag> {
+        if !self.enabled {
+            return None;
+        }
+        let words = text_words(text);
+        let joined = words.join(" ");
+        let ambiguous: Vec<String> = AMBIGUOUS_WORDS.iter().map(|w| fold_phrase(w)).collect();
+        let mut strong: Vec<Flag> = Vec::new();
+        let mut context: Vec<Flag> = Vec::new();
+        for category in ModerationCategory::ALL {
+            if !self.is_on(category) {
+                continue;
+            }
+            for word in category.words() {
+                let base = fold_phrase(word);
+                if base.is_empty() || self.allow.iter().any(|a| fold_phrase(a) == base) {
+                    continue;
+                }
+                let found = [base.clone(), format!("{base}s"), format!("{base}es")]
+                    .iter()
+                    .any(|form| matches(&joined, form));
+                if !found {
+                    continue;
+                }
+                let flag = Flag {
+                    word: (*word).to_string(),
+                    category,
+                    severity: category.severity(),
+                };
+                if ambiguous.contains(&base) {
+                    if addressed(&words, &base) {
+                        context.push(flag);
+                    }
+                } else {
+                    strong.push(flag);
+                }
+            }
+        }
+        strong
+            .into_iter()
+            .chain(context)
+            .max_by_key(|f| f.severity)
+    }
 }
 
 /// Limits the people and roles a message may mention, and what happens to members who break it.
@@ -518,6 +1178,12 @@ impl AutoMod {
         self.mentions.notice = self.mentions.notice.trim().chars().take(MAX_NOTICE_LEN).collect();
         self.mentions.allowed_roles.sort_unstable();
         self.mentions.allowed_roles.dedup();
+        self.flagged.allow = tidy_words(self.flagged.allow);
+        self.flagged.notice = self.flagged.notice.trim().chars().take(MAX_NOTICE_LEN).collect();
+        self.flagged.allowed_roles.sort_unstable();
+        self.flagged.allowed_roles.dedup();
+        self.flagged.allowed_channels.sort_unstable();
+        self.flagged.allowed_channels.dedup();
         if let Some(channel) = self.names.old_alert_channel.take() {
             if self.alert_channel.is_none() {
                 self.alert_channel = Some(channel);
