@@ -1314,6 +1314,17 @@ impl AutoMod {
 
     /// The rules as given, tidied: word lists trimmed, lower-cased, without blanks or repeats, and
     /// within the limits.
+    /// Whether any rule is switched on.
+    pub fn any_rule_on(&self) -> bool {
+        self.block_links
+            || self.spam_filter
+            || self.names.enabled
+            || self.mentions.enabled
+            || self.flagged.enabled
+            || self.filtered.enabled
+            || !self.blocked_words.is_empty()
+    }
+
     pub fn tidied(mut self) -> Self {
         self.blocked_words = tidy_words(self.blocked_words);
         self.names.words = tidy_words(self.names.words);
@@ -1682,6 +1693,10 @@ pub const MAX_ROLE_NAME_LEN: usize = 32;
 /// The id of the `@everyone` role. Every member has it, it always sits at the bottom of the
 /// hierarchy, and it cannot be deleted, moved or given out. Its colour and permissions apply to all.
 pub const EVERYONE_ROLE: i64 = 0;
+
+/// The id of the AutoMod role. It is made the first time an AutoMod rule is switched on. Its colour is the
+/// colour of AutoMod's messages. It cannot be deleted or given to members, as it belongs to the bot.
+pub const AUTOMOD_ROLE: i64 = -1;
 
 /// A badge an admin gives a member on this server. It shows on the member's profile card.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

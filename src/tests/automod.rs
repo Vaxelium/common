@@ -434,3 +434,12 @@ fn every_listed_word_is_still_flagged() {
         }
     }
 }
+
+#[test]
+fn any_rule_on_follows_the_switches() {
+    assert!(!AutoMod::default().any_rule_on(), "nothing is on at first");
+    assert!(AutoMod { block_links: true, ..AutoMod::default() }.any_rule_on());
+    let mut flagged = AutoMod::default();
+    flagged.flagged.enabled = true;
+    assert!(flagged.any_rule_on());
+}
