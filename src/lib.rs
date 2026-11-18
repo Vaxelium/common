@@ -546,15 +546,12 @@ pub const SEVERE_PROFANITY_WORDS: &[&str] = &[
     "fucking",
     "fucked",
     "fucker",
-    "fuckers",
     "fuckface",
     "fuckhead",
     "fuckwit",
     "motherfucker",
-    "motherfuckers",
     "motherfucking",
     "shit",
-    "shits",
     "shitty",
     "shithead",
     "shitface",
@@ -566,42 +563,28 @@ pub const SEVERE_PROFANITY_WORDS: &[&str] = &[
     "shitstorm",
     "shitstain",
     "cunt",
-    "cunts",
     "cunting",
     "asshole",
-    "assholes",
     "arsehole",
-    "arseholes",
     "bastard",
-    "bastards",
     "bitch",
-    "bitches",
     "bitching",
     "sonofabitch",
     "dick",
-    "dicks",
     "dickhead",
-    "dickheads",
     "dickwad",
     "dickweed",
     "prick",
-    "pricks",
     "wanker",
-    "wankers",
     "wank",
     "wanking",
     "twat",
-    "twats",
     "tosser",
-    "tossers",
     "bellend",
-    "bellends",
     "knob",
     "knobhead",
-    "knobheads",
     "pillock",
     "cocksucker",
-    "cocksuckers",
     "cockhead",
     "cockwomble",
     "fuck off",
@@ -650,37 +633,23 @@ pub const MILD_PROFANITY_WORDS: &[&str] = &[
 /// General insults and put-downs, not aimed at an identity.
 pub const GENERAL_INSULTS_WORDS: &[&str] = &[
     "idiot",
-    "idiots",
     "idiotic",
     "moron",
-    "morons",
     "moronic",
     "imbecile",
-    "imbeciles",
     "dumbass",
-    "dumbasses",
     "dumbfuck",
-    "dumbfucks",
     "stupid",
     "stupidity",
     "loser",
-    "losers",
     "clown",
-    "clowns",
     "jerk",
-    "jerks",
     "dork",
-    "dorks",
     "nitwit",
-    "nitwits",
     "halfwit",
-    "halfwits",
     "numbskull",
-    "numbskulls",
     "scumbag",
-    "scumbags",
     "degenerate",
-    "degenerates",
     "dipstick",
     "bonehead",
     "airhead",
@@ -690,22 +659,17 @@ pub const GENERAL_INSULTS_WORDS: &[&str] = &[
     "low life",
     "douche",
     "douchebag",
-    "douchebags",
     "jackass",
-    "jackasses",
     "asshat",
     "assclown",
     "tool",
     "buffoon",
     "fool",
     "creep",
-    "creeps",
     "weirdo",
-    "weirdos",
     "psycho",
     "lunatic",
     "coward",
-    "cowards",
     "pathetic",
     "worthless",
     "disgusting",
@@ -716,8 +680,6 @@ pub const GENERAL_INSULTS_WORDS: &[&str] = &[
     "piece of trash",
     "incompetent",
     "ignoramus",
-    "dipshit",
-    "shithead",
     "twit",
     "cretin",
     "simpleton",
@@ -742,7 +704,6 @@ pub const GENERAL_INSULTS_WORDS: &[&str] = &[
 pub const IDENTITY_SLURS_WORDS: &[&str] = &[
     "retard",
     "retarded",
-    "retards",
     "spastic",
     "spaz",
     "spazzy",
@@ -769,7 +730,6 @@ pub const SEXUAL_CONTENT_WORDS: &[&str] = &[
     "erotic",
     "sexually explicit",
     "nude",
-    "nudes",
     "nudity",
     "naked",
     "topless",
@@ -785,7 +745,6 @@ pub const SEXUAL_CONTENT_WORDS: &[&str] = &[
     "masturbate",
     "masturbating",
     "orgasm",
-    "orgasms",
     "climax",
     "blowjob",
     "blow job",
@@ -1078,10 +1037,26 @@ pub struct FilteredWords {
 /// Common patterns a server can add to its filter with one press. Each is a regular expression.
 pub const PRESET_FILTERS: &[(&str, &str)] = &[
     ("URLs", r"(?i)https?://[^\s]+"),
-    ("Mentions", r"(?i)<@!?[0-9]+>"),
+    // An @ that starts a word, as the app writes mentions (`@name`). Email addresses are not mentions.
+    ("Mentions", r"\B@\S+"),
     ("Invite links", r"(?i)(discord\.gg/[^\s]+|discord\.com/invite/[^\s]+)"),
     ("Caps spam", r"[A-Z]{5,}"),
+    // The message formatting patterns of HoneyPot's AutoMod.
+    ("Capitals", r"(?-i)(?:[A-Z]\s?){10,}"),
+    ("Spoilers", r"(?s)\|\|.+?\|\|"),
+    ("Emojis", r"((<a?:[a-z_0-9]+:[0-9]+>|\p{Extended_Pictographic})\s?){5,}"),
+    ("Headers", r"(?m)^#{1,3}\s+\S"),
+    ("Unicode", r"\p{M}{3,}"),
+    ("Code blocks", r"(?s)`[^`]+`"),
+    ("Bullet lists", r"(?m)^\s*(?:[-*+]|\d+\.)\s+\S"),
+    ("Embedded links", r"(?i)\[[^\]]*\]\(\s*<?https?://[^)]+\)"),
+    // An email address, such as name@example.com.
+    ("Emails", r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
 ];
+
+/// The presets a new filter starts with. The others are added by hand, so a server does not get
+/// formatting rules, such as bullet lists, that it did not choose.
+const DEFAULT_FILTER_NAMES: &[&str] = &["URLs", "Mentions", "Invite links", "Caps spam"];
 
 /// How many of the same character in a row count as repeated: the default, and the least and most a rule may use.
 pub const REPEATED_CHARS: usize = 5;
@@ -1096,7 +1071,11 @@ pub const MAX_FILTER_PATTERNS: usize = 50;
 pub const MAX_FILTER_PATTERN_LEN: usize = 200;
 
 fn default_patterns() -> Vec<String> {
-    PRESET_FILTERS.iter().map(|(_, pattern)| (*pattern).to_string()).collect()
+    PRESET_FILTERS
+        .iter()
+        .filter(|(name, _)| DEFAULT_FILTER_NAMES.contains(name))
+        .map(|(_, pattern)| (*pattern).to_string())
+        .collect()
 }
 
 impl Default for FilteredWords {

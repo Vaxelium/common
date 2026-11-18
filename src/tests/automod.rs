@@ -314,7 +314,7 @@ fn default_filters_are_the_presets() {
         ..FilteredWords::default()
     };
     assert_eq!(f.find("see https://example.com now").as_deref(), Some("https://example.com"));
-    assert_eq!(f.find("hi <@!12345> there").as_deref(), Some("<@!12345>"));
+    assert_eq!(f.find("hi @bob there").as_deref(), Some("@bob"));
     assert_eq!(f.find("join discord.gg/abc").as_deref(), Some("discord.gg/abc"));
     assert_eq!(f.find("LOUD SHOUTING").as_deref(), Some("SHOUTING"));
     assert!(f.find("quiet and tidy").is_none());
@@ -385,4 +385,52 @@ fn repeated_limit_is_the_rule_setting() {
     }
     .tidied();
     assert_eq!(r.filtered.repeated_limit, MAX_REPEATED, "clamped to the most allowed");
+}
+
+#[test]
+fn every_preset_compiles_and_matches_its_sample() {
+    let samples = [
+        ("URLs", "see https://example.com"),
+        ("Mentions", "hi @bob"),
+        ("Invite links", "join discord.gg/abc"),
+        ("Caps spam", "LOUD SHOUTING"),
+        ("Capitals", "THIS IS SHOUTING IN TEN"),
+        ("Spoilers", "a ||hidden|| bit"),
+        ("Emojis", "😀😀😀😀😀"),
+        ("Headers", "# Big title"),
+        ("Unicode", "zal̴̴̴go"),
+        ("Code blocks", "use `code` here"),
+        ("Bullet lists", "intro\n- first item"),
+        ("Embedded links", "[click](https://example.com)"),
+        ("Embedded links", "[click](HTTPS://EXAMPLE.COM)"),
+        ("Emails", "mail bob@example.com today"),
+    ];
+    for (name, text) in samples {
+        let (_, pattern) = PRESET_FILTERS.iter().find(|(n, _)| *n == name).expect(name);
+        let re = regex::Regex::new(pattern).unwrap_or_else(|e| panic!("{name} does not compile: {e}"));
+        assert!(re.is_match(text), "{name} should match {text:?}");
+    }
+    let mentions = PRESET_FILTERS.iter().find(|(n, _)| *n == "Mentions").unwrap().1;
+    let re = regex::Regex::new(mentions).unwrap();
+    assert!(!re.is_match("mail me at bob@example.com"), "an email address is not a mention");
+    assert!(FilteredWords::default().patterns.len() == 4, "new filters start with the four defaults");
+}
+
+#[test]
+fn every_listed_word_is_still_flagged() {
+    // Plural forms and spelling variants are matched from the base word, so dropping a plural from a
+    // list must not lose it. Context words are only flagged when addressed, so they are tested that way.
+    for category in ModerationCategory::ALL {
+        let mut f = FlaggedWords::default();
+        f.enabled = true;
+        f.set(category, true);
+        for word in category.words() {
+            let text = if AMBIGUOUS_WORDS.iter().any(|a| fold_phrase(a) == fold_phrase(word)) {
+                format!("you {word}")
+            } else {
+                word.to_string()
+            };
+            assert!(f.flags(&text).is_some(), "{category:?}: {word:?} should be flagged");
+        }
+    }
 }
