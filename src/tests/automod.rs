@@ -163,3 +163,138 @@ fn name_notice_is_trimmed_and_limited() {
     .tidied();
     assert_eq!(r.names.notice.len(), MAX_NOTICE_LEN);
 }
+
+/// A rule that is on, with the given categories switched on.
+fn on(categories: &[ModerationCategory]) -> FlaggedWords {
+    let mut f = FlaggedWords {
+        enabled: true,
+        ..FlaggedWords::default()
+    };
+    for c in categories {
+        f.set(*c, true);
+    }
+    f
+}
+
+fn word_of(f: &FlaggedWords, text: &str) -> Option<String> {
+    f.flags(text).map(|flag| flag.word)
+}
+
+#[test]
+fn flagged_words_follow_the_chosen_categories() {
+    let f = on(&[ModerationCategory::SevereProfanity]);
+    let flag = f.flags("well, SHIT").expect("shit is listed");
+    assert_eq!(flag.word, "shit");
+    assert_eq!(flag.category, ModerationCategory::SevereProfanity);
+    assert_eq!(flag.severity, ModerationSeverity::High);
+    assert!(f.flags("you idiot").is_none(), "insults are not on");
+    assert!(on(&[ModerationCategory::GeneralInsults]).flags("you idiot").is_some());
+    assert!(on(&[ModerationCategory::SexualContent]).flags("nsfw stuff").is_some());
+    assert!(!FlaggedWords::default().is_on(ModerationCategory::Spam));
+}
+
+#[test]
+fn flagged_words_match_whole_words_only() {
+    let f = on(&[ModerationCategory::SevereProfanity]);
+    assert!(f.flags("a classy night").is_none(), "not inside a longer word");
+    assert!(f.flags("a glass of water").is_none());
+}
+
+#[test]
+fn allowed_words_and_off_rules_do_not_flag() {
+    let mut f = on(&[ModerationCategory::SevereProfanity]);
+    f.allow = vec!["Shit".into()];
+    assert!(f.flags("shit happens").is_none(), "an allowed word is not flagged");
+    let off = FlaggedWords {
+        enabled: false,
+        ..on(&[ModerationCategory::SevereProfanity, ModerationCategory::GeneralInsults])
+    };
+    assert!(off.flags("shit idiot").is_none());
+}
+
+#[test]
+fn flagged_rule_is_tidied() {
+    let r = AutoMod {
+        flagged: FlaggedWords {
+            allow: vec!["  Shit ".into(), "shit".into(), "".into()],
+            allowed_roles: vec![3, 1, 3],
+            allowed_channels: vec![9, 9],
+            notice: format!("  {}  ", "x".repeat(MAX_NOTICE_LEN + 5)),
+            ..FlaggedWords::default()
+        },
+        ..AutoMod::default()
+    }
+    .tidied();
+    assert_eq!(r.flagged.allow, vec!["shit".to_string()]);
+    assert_eq!(r.flagged.allowed_roles, vec![1, 3]);
+    assert_eq!(r.flagged.allowed_channels, vec![9]);
+    assert_eq!(r.flagged.notice.chars().count(), MAX_NOTICE_LEN);
+}
+
+#[test]
+fn flagged_words_see_through_spelling_tricks() {
+    let f = on(&[ModerationCategory::SevereProfanity]);
+    assert!(f.flags("what the sh1t").is_some(), "leetspeak");
+    assert!(f.flags("f.u.c.k off").is_some(), "separators between letters");
+    assert!(f.flags("fuuuuck").is_some(), "repeated letters");
+    assert!(f.flags("s h i t").is_some(), "letters spaced apart");
+    assert!(f.flags("bullshit").is_some(), "a word with a double letter");
+    assert!(f.flags("bulshit").is_some());
+    assert!(f.flags("so many shits").is_some(), "plurals");
+    assert!(f.flags("a clean sentence about cats").is_none());
+}
+
+#[test]
+fn allowances_and_plurals_fold_too() {
+    let mut f = on(&[ModerationCategory::GeneralInsults]);
+    assert!(f.flags("stop being idiots").is_some());
+    f.allow = vec!["Id1ot".into()];
+    assert!(f.flags("you idiot").is_none(), "an allowance is folded the same way");
+}
+
+#[test]
+fn phrases_match_word_by_word() {
+    let f = on(&[ModerationCategory::SevereProfanity]);
+    assert_eq!(word_of(&f, "I said up yours, mate").as_deref(), Some("up yours"));
+    assert!(f.flags("look up at yours").is_none(), "the words must come together");
+}
+
+#[test]
+fn context_words_need_someone_to_be_addressed() {
+    let f = on(&[ModerationCategory::SexualContent]);
+    assert!(f.flags("what a nice ass view").is_none(), "not addressed to anyone");
+    assert_eq!(word_of(&f, "you ass").as_deref(), Some("ass"), "addressed with you");
+    let g = on(&[ModerationCategory::MildProfanity]);
+    assert!(g.flags("that was hell of a game").is_none());
+    assert!(g.flags("your hell is showing").is_some());
+}
+
+#[test]
+fn a_strong_word_flags_alongside_context_words_and_the_worst_wins() {
+    let f = on(&[ModerationCategory::SevereProfanity, ModerationCategory::MildProfanity]);
+    let flag = f.flags("hell, shit").expect("both are listed");
+    assert_eq!(flag.word, "shit", "the more severe word is reported");
+    assert_eq!(flag.severity, ModerationSeverity::High);
+    assert!(f.flags("hell of a day").is_none(), "a context word alone is fine");
+}
+
+#[test]
+fn threats_identity_slurs_harassment_and_spam_are_listed() {
+    assert_eq!(
+        on(&[ModerationCategory::Threats])
+            .flags("I'll kill you tomorrow")
+            .map(|f| f.severity),
+        Some(ModerationSeverity::Critical)
+    );
+    assert!(on(&[ModerationCategory::IdentityBasedSlurs]).flags("you retards").is_some());
+    assert!(on(&[ModerationCategory::SexualHarassment]).flags("send nudes").is_some());
+    assert!(on(&[ModerationCategory::Spam]).flags("FREE NITRO!!").is_some());
+    assert!(on(&[ModerationCategory::Spam]).flags("hello there").is_none());
+}
+
+#[test]
+fn old_rules_read_insults_slurs_as_general_insults() {
+    let old: FlaggedWords = serde_json::from_str(r#"{"enabled":true,"insults_slurs":true}"#).unwrap();
+    assert!(old.general_insults && old.enabled);
+    assert!(!old.identity_slurs, "identity slurs are a category of their own now");
+}
