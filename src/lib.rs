@@ -296,6 +296,31 @@ pub struct Reaction {
     pub users: Vec<String>,
 }
 
+/// Why the message rules refused a message: the sentence for the member, the rule that caught it, and the word
+/// it matched, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Breach {
+    pub reason: String,
+    pub rule: &'static str,
+    pub keyword: String,
+}
+
+/// What AutoMod's report of a caught message says: who sent it, where, which rule caught it, on what keyword,
+/// and the message itself. Empty `content` means there was no message, such as a flagged name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AutoModReport {
+    /// The member's account id, so the report can show their picture.
+    pub user_id: String,
+    pub display: String,
+    /// The channel the message was sent in, and its name. Zero and empty for a name alert.
+    #[serde(default)]
+    pub channel_id: i64,
+    pub channel: String,
+    pub rule: String,
+    pub keyword: String,
+    pub content: String,
+}
+
 /// A single chat message as stored and broadcast by the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatMessage {
@@ -326,6 +351,9 @@ pub struct ChatMessage {
     /// True while the message is pinned in its channel.
     #[serde(default)]
     pub pinned: bool,
+    /// For a message AutoMod posted about a caught message: the details the client shows in a card.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<AutoModReport>,
 }
 
 /// A server's automatic moderation rules. Members who may manage messages in a channel are not held to
@@ -1154,13 +1182,21 @@ pub const MAX_BLOCKED_WORD_LEN: usize = 60;
 impl AutoMod {
     /// Why `text` breaks the message rules, or None when it does not. The spam filter is checked
     /// separately, as it depends on what was sent before.
-    pub fn check(&self, text: &str) -> Option<String> {
+    pub fn check(&self, text: &str) -> Option<Breach> {
         let lower = text.to_lowercase();
         if let Some(word) = self.blocked_words.iter().find(|w| matches(&lower, w)) {
-            return Some(format!("AutoMod: your message contains a blocked word ({word})"));
+            return Some(Breach {
+                reason: format!("AutoMod: your message uses a blocked word: “{word}”"),
+                rule: "AutoMod Blocked Words",
+                keyword: word.clone(),
+            });
         }
         if self.block_links && has_link(&lower) {
-            return Some("AutoMod: links are not allowed here".into());
+            return Some(Breach {
+                reason: "AutoMod: links are not allowed in this channel".into(),
+                rule: "Block Links",
+                keyword: String::new(),
+            });
         }
         None
     }
