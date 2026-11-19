@@ -1367,6 +1367,21 @@ pub fn is_automod(author_id: &str) -> bool {
     author_id == AUTOMOD_ID
 }
 
+/// The author id of the notices the server posts about members, such as "someone connected". Clients
+/// show these as system lines rather than as a message from a member.
+pub const NOTICE_ID: &str = "system:notice";
+
+/// Whether a message is a notice the server posted about a member.
+pub fn is_notice(author_id: &str) -> bool {
+    author_id == NOTICE_ID
+}
+
+/// Whether an id belongs to the server itself (AutoMod, the notices, and any other server author),
+/// rather than to an account. Those ids all start with `system:`.
+pub fn is_system_id(id: &str) -> bool {
+    id.starts_with("system:")
+}
+
 /// How many messages a member may send within `SPAM_WINDOW_SECS` while the spam filter is on.
 pub const SPAM_LIMIT: usize = 5;
 pub const SPAM_WINDOW_SECS: u64 = 5;
@@ -1779,6 +1794,10 @@ pub const EVERYONE_ROLE: i64 = 0;
 /// The id of the AutoMod role. It is made the first time an AutoMod rule is switched on. Its colour is the
 /// colour of AutoMod's messages. It cannot be deleted or given to members, as it belongs to the bot.
 pub const AUTOMOD_ROLE: i64 = -1;
+
+/// The id of the System role, held by the server's own notices. Like the AutoMod role, it is made when the
+/// server starts, is an administrator, and cannot be deleted, moved or given to members.
+pub const SYSTEM_ROLE: i64 = -2;
 
 /// A badge an admin gives a member on this server. It shows on the member's profile card.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
