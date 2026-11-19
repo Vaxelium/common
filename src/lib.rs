@@ -417,6 +417,26 @@ impl WordRule {
     }
 }
 
+/// The messages a server posts on its own, such as "X connected", and the channel they go to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SystemMessages {
+    /// Post "X connected" when a member connects. On by default.
+    #[serde(default = "default_true")]
+    pub connect_notice: bool,
+    /// The channel system messages are posted to. None posts them to the channel the member connected in.
+    #[serde(default)]
+    pub channel_id: Option<i64>,
+}
+
+impl Default for SystemMessages {
+    fn default() -> Self {
+        Self {
+            connect_notice: true,
+            channel_id: None,
+        }
+    }
+}
+
 /// A server's automatic moderation rules. Members who may manage messages in a channel are not held to
 /// the message rules there, and direct messages are never checked.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1809,8 +1829,13 @@ pub fn is_valid_email(email: &str) -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMsg {
-    /// First message on a connection: prove who you are with a session token from the auth service.
-    Connect { token: String },
+    /// First message on a connection: prove who you are with a session token from the auth service. An account
+    /// that left the server is refused unless `join` asks to be a member again.
+    Connect {
+        token: String,
+        #[serde(default)]
+        join: bool,
+    },
     /// Switch to a channel (created on demand). Receives its history.
     Join { channel: String },
     /// Send a message to the current channel, as a reply to the message `reply_to` when it is set.
@@ -1830,6 +1855,18 @@ pub enum ClientMsg {
     ListPins { channel: i64 },
     /// Ask for the server's automatic moderation rules. Needs Manage Server.
     GetAutoMod,
+    /// Make another member the owner of this server. Only the owner may. Needs a valid session.
+    TransferOwnership { id: String },
+    /// Delete this server and everything in it. Only the owner may. Every connection is closed and the server
+    /// refuses new ones. Needs a valid session.
+    DeleteServer,
+    /// Leave this server: the account stops being a member, and its roles, badges and channel overrides
+    /// here are removed. The owner cannot leave. Needs a valid session.
+    LeaveServer,
+    /// Ask for the server's system messages settings. Needs Manage Server.
+    GetSystemMessages,
+    /// Replace the server's system messages settings. Needs Manage Server.
+    SetSystemMessages { settings: SystemMessages },
     /// Replace the server's automatic moderation rules. Needs Manage Server.
     SetAutoMod { rules: AutoMod },
     /// Add your reaction to a message, or take it off if it is already there.
@@ -2097,6 +2134,18 @@ pub enum ServerMsg {
     /// The server's automatic moderation rules, for those who may change them.
     AutoMod {
         rules: AutoMod,
+    },
+    /// The server was deleted by its owner. Sent to every connection, which is then closed.
+    ServerDeleted,
+    /// The account left this server, so it is not let back in until it asks to join again. Sent before the
+    /// server closes the connection.
+    NotJoined,
+    /// The account is no longer a member of this server. Sent in reply to `LeaveServer`, before the server closes
+    /// the connection.
+    Left,
+    /// The server's system messages settings, for those who may change them.
+    SystemMessages {
+        settings: SystemMessages,
     },
     /// The reactions on a message in `channel` now look like this.
     Reactions {
