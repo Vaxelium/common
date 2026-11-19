@@ -1905,14 +1905,6 @@ pub enum ClientMsg {
     React { id: i64, emoji: String },
     /// Request the list of channels.
     ListChannels,
-    /// Open a direct message with the member whose display name is `name`, creating it the first
-    /// time. Answered with `ServerMsg::Joined` for the conversation.
-    OpenDm { name: String },
-    /// Ask for the direct messages you are part of. Answered with `ServerMsg::DirectMessages`.
-    ListDirectMessages,
-    /// Ask for the history of one direct message you are part of, without joining it. Answered
-    /// with `ServerMsg::DmHistory`.
-    FetchDm { channel: String },
     /// End this connection's session on this server, so its token stops working here even if
     /// the auth service cannot be reached. The server then closes the connection.
     Logout,
@@ -2048,9 +2040,6 @@ pub enum ClientMsg {
         #[serde(default)]
         manage_messages: Option<bool>,
     },
-    /// Server to server: deliver a direct message from the account of `token` to the account `to`,
-    /// which this server stores as its own copy. Answered with `ServerMsg::RelayAck`.
-    RelayDm { token: String, to: String, text: String },
 }
 
 /// A channel, by its permanent id and its current name. Only the name can change.
@@ -2084,6 +2073,92 @@ pub struct DirectMessage {
     /// The other member's hidden account id. The same person has the same id on every server.
     #[serde(default)]
     pub other_id: String,
+}
+
+/// Where the direct message service listens by default, over TLS like the auth service.
+pub const DEFAULT_DM_ADDR: &str = "127.0.0.1:7910";
+
+/// Longest message a direct message can hold, in characters. Same as a channel message.
+pub const MAX_DM_TEXT_LEN: usize = 2000;
+
+/// A request to the direct message service, one JSON line each. Every request carries the sender's session
+/// `token`, which the service checks with the auth service. Conversations are named by `channel_id`, as
+/// channels are on a chat server, and their channel name is `dm-<channel_id>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DmRequest {
+    /// Open the conversation with the account `with`, creating it the first time. Answered with `Opened`.
+    Open { token: String, with: String },
+    /// The conversations the account is in, newest first. Answered with `Conversations`.
+    List { token: String },
+    /// The latest messages of a conversation the account is in, oldest first. Answered with `Messages`.
+    History { token: String, channel_id: i64 },
+    /// Send a message to the account `to`, optionally as a reply to message `reply_to`. Answered with `Changed`.
+    Send {
+        token: String,
+        to: String,
+        text: String,
+        #[serde(default)]
+        reply_to: Option<i64>,
+    },
+    /// Change your own message. Answered with `Changed`.
+    Edit { token: String, id: i64, text: String },
+    /// Delete your own message. Answered with `Deleted`.
+    Delete { token: String, id: i64 },
+    /// Add your reaction to a message, or take it off if you already reacted with that emoji. Answered with `Changed`.
+    React { token: String, id: i64, emoji: String },
+    /// Pin or unpin a message in its conversation. Answered with `Changed`.
+    Pin { token: String, id: i64, pinned: bool },
+    /// Mark a conversation read up to message `id`. Answered with `Read`.
+    Read { token: String, channel_id: i64, id: i64 },
+    /// Everything that changed after change number `after` in the account's conversations, and the number
+    /// to ask from next time. Answered with `Updates`. Start with `after` of 0.
+    Poll { token: String, after: i64 },
+}
+
+/// The last message the account read in a conversation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DmRead {
+    pub channel_id: i64,
+    pub id: i64,
+}
+
+/// A message that was deleted, so a client can take it away.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DmDeleted {
+    pub channel_id: i64,
+    pub id: i64,
+}
+
+/// Replies from the direct message service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DmReply {
+    /// The conversation asked for by `Open`.
+    Opened { conversation: DirectMessage },
+    /// The conversations, and the account's read positions in them.
+    Conversations {
+        list: Vec<DirectMessage>,
+        #[serde(default)]
+        read: Vec<DmRead>,
+    },
+    /// The messages asked for by `History`, oldest first.
+    Messages { messages: Vec<ChatMessage> },
+    /// A message that was sent or changed.
+    Changed { message: ChatMessage },
+    /// A message that was deleted.
+    Deleted { channel_id: i64, id: i64 },
+    /// The read position was saved.
+    Read,
+    /// What changed since the `after` of the poll: messages that are new or changed, messages deleted, and the
+    /// number to ask from next time.
+    Updates {
+        messages: Vec<ChatMessage>,
+        deleted: Vec<DmDeleted>,
+        seq: i64,
+    },
+    /// The request was refused, with the reason.
+    Error { text: String },
 }
 
 /// Messages sent from server to client.
@@ -2205,15 +2280,6 @@ pub enum ServerMsg {
         #[serde(default)]
         uncategorized: Vec<ChannelRef>,
     },
-    /// The direct messages this account is part of. `name` is the other member's display name.
-    DirectMessages {
-        list: Vec<DirectMessage>,
-    },
-    /// The history of a direct message, as asked for with `ClientMsg::FetchDm`.
-    DmHistory {
-        channel: String,
-        messages: Vec<ChatMessage>,
-    },
     System {
         channel_id: i64,
         text: String,
@@ -2262,10 +2328,6 @@ pub enum ServerMsg {
     /// A new message arrived in a channel other than the one you are viewing.
     Activity {
         channel_id: i64,
-    },
-    /// Answer to `ClientMsg::RelayDm`. `error` says why the message was not stored.
-    RelayAck {
-        error: Option<String>,
     },
     Error {
         text: String,
