@@ -440,6 +440,24 @@ impl Default for SystemMessages {
     }
 }
 
+/// One ban on a server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BanInfo {
+    /// The banned account's hidden id.
+    pub user: String,
+    /// Its display name, as far as the server knows it.
+    pub name: String,
+    /// The reason given, or empty.
+    #[serde(default)]
+    pub reason: String,
+    /// The display name of the member who banned them.
+    #[serde(default)]
+    pub by: String,
+    /// When the ban was made (Unix seconds).
+    #[serde(default)]
+    pub at: u64,
+}
+
 /// A server's automatic moderation rules. Members who may manage messages in a channel are not held to
 /// the message rules there, and direct messages are never checked.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1620,6 +1638,11 @@ pub mod perm {
     pub const MANAGE_SERVER: u32 = 1 << 7;
     /// Pin and unpin messages. Manage messages also allows it.
     pub const PIN_MESSAGES: u32 = 1 << 8;
+    /// Remove members from the server. They may join again. Only members whose highest role is below one's own.
+    pub const KICK_MEMBERS: u32 = 1 << 9;
+    /// Ban members from the server, so they cannot join again until unbanned. Only members whose highest role
+    /// is below one's own.
+    pub const BAN_MEMBERS: u32 = 1 << 10;
     /// Every permission there is.
     pub const ALL: u32 = MANAGE_CHANNELS
         | MANAGE_ROLES
@@ -1629,7 +1652,9 @@ pub mod perm {
         | SEND_MESSAGES
         | ADMINISTRATOR
         | MANAGE_SERVER
-        | PIN_MESSAGES;
+        | PIN_MESSAGES
+        | KICK_MEMBERS
+        | BAN_MEMBERS;
 }
 
 /// Who a setting is for is decided by the caller. This picks the outcome for one permission: a member's
@@ -1899,6 +1924,14 @@ pub enum ClientMsg {
     GetSystemMessages,
     /// Replace the server's system messages settings. Needs Manage Server.
     SetSystemMessages { settings: SystemMessages },
+    /// Remove a member from the server. They can join again. Needs Kick Members. `reason` is optional.
+    Kick { user: String, reason: Option<String> },
+    /// Remove a member and stop them joining until unbanned. Needs Ban Members. `reason` is optional.
+    Ban { user: String, reason: Option<String> },
+    /// Let a banned account join again. Needs Ban Members.
+    Unban { user: String },
+    /// Ask for the server's bans. Needs Ban Members. Answered with `ServerMsg::Bans`.
+    GetBans,
     /// Replace the server's automatic moderation rules. Needs Manage Server.
     SetAutoMod { rules: AutoMod },
     /// Add your reaction to a message, or take it off if it is already there.
@@ -2244,6 +2277,11 @@ pub enum ServerMsg {
     },
     /// The server was deleted by its owner. Sent to every connection, which is then closed.
     ServerDeleted,
+    /// The server's bans, as asked for with `ClientMsg::GetBans`.
+    Bans { bans: Vec<BanInfo> },
+    /// A member was removed from the server (kicked, or banned). Sent to everyone connected, and the member
+    /// removed is told last and disconnected.
+    Removed { user: String, banned: bool, reason: String },
     /// The account left this server, so it is not let back in until it asks to join again. Sent before the
     /// server closes the connection.
     NotJoined,
