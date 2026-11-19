@@ -1206,6 +1206,9 @@ impl Default for MentionRule {
     }
 }
 
+/// The longest name in chat, the same as the auth service allows.
+pub const MAX_DISPLAY_NAME_LEN: usize = 24;
+
 /// The most mentions one message may be limited to, and the longest timeout AutoMod may give.
 pub const MAX_MENTIONS_LIMIT: u32 = 50;
 pub const MAX_TIMEOUT_SECS: u64 = 7 * 24 * 60 * 60;
@@ -1859,6 +1862,8 @@ pub enum ClientMsg {
     /// Set the status text shown on this member's card, sent live so everyone connected sees it.
     /// Empty clears it. The text is saved by the auth service.
     SetProfileStatus { text: String },
+    /// Set the name shown in chat, after the auth service has changed it. Sent to every server this client is on.
+    SetDisplayName { name: String },
     /// This member is typing in the open channel. Sent a few times while they type.
     Typing,
     /// Set a role's exception for a channel (see `ChannelOverride`). `None` for both `view` and `send`
@@ -2095,6 +2100,11 @@ pub enum ServerMsg {
     ProfileStatus {
         user: String,
         text: String,
+    },
+    /// A member's name in chat changed. Sent to everyone connected to this server, so their messages show it.
+    MemberRenamed {
+        id: String,
+        name: String,
     },
     /// Every channel's exceptions for roles. Sent on connect and after every change to them.
     ChannelOverrides {
