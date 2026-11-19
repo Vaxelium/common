@@ -135,6 +135,12 @@ pub enum AuthRequest {
         token: String,
         password: String,
     },
+    /// Change the password of an account that has one. Needs a valid session and the current password.
+    ChangePassword {
+        token: String,
+        current: String,
+        password: String,
+    },
     /// Permanently delete the session's account. Needs the current password, so an account without one
     /// must set one first. Needs a valid session.
     DeleteAccount {
@@ -260,6 +266,8 @@ pub enum AuthReply {
     },
     /// The password was set.
     PasswordSet,
+    /// The password was changed.
+    PasswordChanged,
     /// The account was deleted.
     AccountDeleted,
     /// The Discord account linked to the session's account, by its display name (None when not linked),
