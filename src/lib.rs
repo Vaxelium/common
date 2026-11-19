@@ -46,11 +46,14 @@ pub enum AuthRequest {
     Profile {
         token: String,
     },
-    /// Change the name shown in chat, the username, or both. Needs a valid session.
+    /// Change the name shown in chat, the username, or both. Needs a valid session. A new username needs the
+    /// account's current password, as a change of email does.
     UpdateProfile {
         token: String,
         name: Option<String>,
         username: Option<String>,
+        #[serde(default)]
+        password: Option<String>,
     },
     /// Ask for a code to confirm the account's email address. The code is emailed to it. Needs a session.
     RequestEmailCode {
