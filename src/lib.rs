@@ -367,13 +367,63 @@ pub struct ChatMessage {
     pub report: Option<AutoModReport>,
 }
 
+/// The Filtered Words rule: words and phrases a message may not contain, with its own response.
+/// Members with Administrator or Manage Server, and members holding one of the allowed roles or sitting in one
+/// of the allowed channels, are left alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WordRule {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Words and phrases a message may not contain, matched without regard to case (see `matches`).
+    #[serde(default)]
+    pub words: Vec<String>,
+    /// Refuse a message that matches. Off, the message goes through and only the alert applies.
+    #[serde(default = "default_true")]
+    pub block: bool,
+    /// Post a report to AutoMod's channel when the rule catches a message.
+    #[serde(default = "default_true")]
+    pub send_alert: bool,
+    /// The notice a member sees when their message is blocked. Empty means the standard reason.
+    #[serde(default)]
+    pub notice: String,
+    #[serde(default)]
+    pub allowed_roles: Vec<i64>,
+    #[serde(default)]
+    pub allowed_channels: Vec<i64>,
+}
+
+impl Default for WordRule {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            words: Vec::new(),
+            block: true,
+            send_alert: true,
+            notice: String::new(),
+            allowed_roles: Vec::new(),
+            allowed_channels: Vec::new(),
+        }
+    }
+}
+
+impl WordRule {
+    /// The listed word that `text` contains, or None when it does not (or the rule is off).
+    pub fn find(&self, text: &str) -> Option<String> {
+        if !self.enabled {
+            return None;
+        }
+        let lower = text.to_lowercase();
+        self.words.iter().find(|w| matches(&lower, w)).cloned()
+    }
+}
+
 /// A server's automatic moderation rules. Members who may manage messages in a channel are not held to
 /// the message rules there, and direct messages are never checked.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AutoMod {
-    /// Words and phrases a message may not contain, matched without regard to case (see `matches`).
+    /// The Filtered Words rule.
     #[serde(default)]
-    pub blocked_words: Vec<String>,
+    pub words: WordRule,
     /// Refuse messages with web links in them.
     #[serde(default)]
     pub block_links: bool,
@@ -1309,13 +1359,6 @@ impl AutoMod {
     /// separately, as it depends on what was sent before.
     pub fn check(&self, text: &str) -> Option<Breach> {
         let lower = text.to_lowercase();
-        if let Some(word) = self.blocked_words.iter().find(|w| matches(&lower, w)) {
-            return Some(Breach {
-                reason: format!("AutoMod: your message uses a blocked word: “{word}”"),
-                rule: "AutoMod Blocked Words",
-                keyword: word.clone(),
-            });
-        }
         if self.block_links && has_link(&lower) {
             return Some(Breach {
                 reason: "AutoMod: links are not allowed in this channel".into(),
@@ -1336,11 +1379,16 @@ impl AutoMod {
             || self.mentions.enabled
             || self.flagged.enabled
             || self.filtered.enabled
-            || !self.blocked_words.is_empty()
+            || self.words.enabled
     }
 
     pub fn tidied(mut self) -> Self {
-        self.blocked_words = tidy_words(self.blocked_words);
+        self.words.words = tidy_words(self.words.words);
+        self.words.notice = self.words.notice.trim().chars().take(MAX_NOTICE_LEN).collect();
+        self.words.allowed_roles.sort_unstable();
+        self.words.allowed_roles.dedup();
+        self.words.allowed_channels.sort_unstable();
+        self.words.allowed_channels.dedup();
         self.names.words = tidy_words(self.names.words);
         self.names.notice = self.names.notice.trim().chars().take(MAX_NOTICE_LEN).collect();
         self.names.allowed_roles.sort_unstable();

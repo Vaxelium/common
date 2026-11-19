@@ -2,21 +2,32 @@ use super::*;
 
 fn rules(words: &[&str], links: bool) -> AutoMod {
     AutoMod {
-        blocked_words: words.iter().map(|w| w.to_string()).collect(),
+        words: WordRule {
+            enabled: true,
+            words: words.iter().map(|w| w.to_string()).collect(),
+            ..WordRule::default()
+        },
         block_links: links,
         ..AutoMod::default()
     }
 }
 
 #[test]
-fn blocked_words_match_whole_words_only() {
-    let r = rules(&["ass", "bad phrase"], false);
-    assert!(r.check("what an ASS").is_some(), "case does not matter");
-    assert!(r.check("ass!").is_some(), "punctuation ends a word");
-    assert!(r.check("a class act").is_none(), "not inside a longer word");
-    assert!(r.check("this is a Bad Phrase here").is_some());
-    assert!(r.check("bad phrases").is_none());
-    assert!(r.check("hello").is_none());
+fn filtered_words_match_whole_words_only() {
+    let r = rules(&["ass", "bad phrase"], false).words;
+    assert!(r.find("what an ASS").is_some(), "case does not matter");
+    assert!(r.find("ass!").is_some(), "punctuation ends a word");
+    assert!(r.find("a class act").is_none(), "not inside a longer word");
+    assert!(r.find("this is a Bad Phrase here").is_some());
+    assert!(r.find("bad phrases").is_none());
+    assert!(r.find("hello").is_none());
+}
+
+#[test]
+fn filtered_words_do_nothing_when_the_rule_is_off() {
+    let mut r = rules(&["ass"], false).words;
+    r.enabled = false;
+    assert!(r.find("what an ass").is_none());
 }
 
 #[test]
@@ -30,14 +41,17 @@ fn links_are_refused_when_blocked() {
 #[test]
 fn rules_are_tidied() {
     let r = rules(&["  Bad ", "bad", "", "x"], false).tidied();
-    assert_eq!(r.blocked_words, vec!["bad".to_string(), "x".to_string()]);
+    assert_eq!(r.words.words, vec!["bad".to_string(), "x".to_string()]);
     let many: Vec<String> = (0..MAX_BLOCKED_WORDS + 10).map(|i| format!("w{i}")).collect();
     let r = AutoMod {
-        blocked_words: many,
+        words: WordRule {
+            words: many,
+            ..WordRule::default()
+        },
         ..AutoMod::default()
     }
     .tidied();
-    assert_eq!(r.blocked_words.len(), MAX_BLOCKED_WORDS);
+    assert_eq!(r.words.words.len(), MAX_BLOCKED_WORDS);
 }
 
 #[test]
