@@ -2285,6 +2285,9 @@ pub enum ServerMsg {
     /// The account left this server, so it is not let back in until it asks to join again. Sent before the
     /// server closes the connection.
     NotJoined,
+    /// The account was kicked from this server, so it is not a member until it asks to join again. Sent before the
+    /// server closes the connection. `reason` is empty when none was given.
+    Kicked { reason: String },
     /// The account is no longer a member of this server. Sent in reply to `LeaveServer`, before the server closes
     /// the connection.
     Left,
