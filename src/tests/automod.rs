@@ -457,3 +457,17 @@ fn any_rule_on_follows_the_switches() {
     flagged.flagged.enabled = true;
     assert!(flagged.any_rule_on());
 }
+
+#[test]
+fn system_messages_say_connections_by_default_and_read_older_settings() {
+    assert_eq!(
+        SystemMessages::default(),
+        SystemMessages {
+            connect_notice: true,
+            channel_id: None
+        }
+    );
+    let older: SystemMessages = serde_json::from_str("{}").unwrap();
+    assert!(older.connect_notice, "a server that never set it keeps the notice");
+    assert_eq!(older.channel_id, None);
+}
