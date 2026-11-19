@@ -365,6 +365,9 @@ pub struct ChatMessage {
     /// For a message AutoMod posted about a caught message: the details the client shows in a card.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub report: Option<AutoModReport>,
+    /// A picture the message shows, as base64 PNG. The server draws it for join notices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
 }
 
 /// The Filtered Words rule: words and phrases a message may not contain, with its own response.
@@ -1367,13 +1370,23 @@ pub fn is_automod(author_id: &str) -> bool {
     author_id == AUTOMOD_ID
 }
 
-/// The author id of the notices the server posts about members, such as "someone connected". Clients
-/// show these as system lines rather than as a message from a member.
-pub const NOTICE_ID: &str = "system:notice";
+/// The author id prefix of the notices the server posts about members, such as "X joined the server".
+/// The member's id follows it, so the notice can show their picture.
+pub const NOTICE_PREFIX: &str = "system:notice:";
+
+/// The author id of a notice about the member with this account id.
+pub fn notice_author(member_id: &str) -> String {
+    format!("{NOTICE_PREFIX}{member_id}")
+}
 
 /// Whether a message is a notice the server posted about a member.
 pub fn is_notice(author_id: &str) -> bool {
-    author_id == NOTICE_ID
+    author_id.starts_with(NOTICE_PREFIX)
+}
+
+/// The account id of the member a notice is about.
+pub fn notice_subject(author_id: &str) -> Option<&str> {
+    author_id.strip_prefix(NOTICE_PREFIX)
 }
 
 /// Whether an id belongs to the server itself (AutoMod, the notices, and any other server author),
