@@ -1318,6 +1318,9 @@ pub const MAX_TIMEOUT_SECS: u64 = 7 * 24 * 60 * 60;
 pub const RAID_MENTIONS: usize = 20;
 pub const RAID_WINDOW_SECS: u64 = 30;
 
+/// The longest slow mode a channel can have, in seconds. Zero turns it off.
+pub const MAX_SLOW_MODE_SECS: u64 = 6 * 60 * 60;
+
 /// The members and roles `text` mentions, counted once each. A mention is `@` followed by a name
 /// that ends the word, as the client shows them.
 pub fn mentioned_count(text: &str, members: &[String], roles: &[String]) -> usize {
@@ -1643,6 +1646,8 @@ pub mod perm {
     /// Ban members from the server, so they cannot join again until unbanned. Only members whose highest role
     /// is below one's own.
     pub const BAN_MEMBERS: u32 = 1 << 10;
+    /// Send messages in a channel with slow mode without waiting between them. Manage messages there also allows it.
+    pub const BYPASS_SLOW_MODE: u32 = 1 << 11;
     /// Every permission there is.
     pub const ALL: u32 = MANAGE_CHANNELS
         | MANAGE_ROLES
@@ -1654,7 +1659,8 @@ pub mod perm {
         | MANAGE_SERVER
         | PIN_MESSAGES
         | KICK_MEMBERS
-        | BAN_MEMBERS;
+        | BAN_MEMBERS
+        | BYPASS_SLOW_MODE;
 }
 
 /// Who a setting is for is decided by the caller. This picks the outcome for one permission: a member's
@@ -2019,6 +2025,9 @@ pub enum ClientMsg {
     SetDisplayName { name: String },
     /// This member is typing in the open channel. Sent a few times while they type.
     Typing,
+    /// Set how long each member must wait between messages in a channel. Zero turns slow mode off.
+    /// Members who may manage messages there are not held to it. Needs Manage channels.
+    SetSlowMode { channel: i64, seconds: u64 },
     /// Set a role's exception for a channel (see `ChannelOverride`). `None` for both `view` and `send`
     /// removes it. Needs Manage channels.
     SetChannelOverride {
@@ -2073,6 +2082,14 @@ pub enum ClientMsg {
         #[serde(default)]
         manage_messages: Option<bool>,
     },
+}
+
+/// A channel's slow mode: the seconds a member must wait between their messages in it. Channels
+/// without slow mode are left out of the list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlowMode {
+    pub channel_id: i64,
+    pub seconds: u64,
 }
 
 /// A channel, by its permanent id and its current name. Only the name can change.
@@ -2353,6 +2370,8 @@ pub enum ServerMsg {
         id: String,
         name: String,
     },
+    /// Every channel that has slow mode. Sent on connect and after every change to it.
+    SlowModes { modes: Vec<SlowMode> },
     /// Every channel's exceptions for roles. Sent on connect and after every change to them.
     ChannelOverrides {
         overrides: Vec<ChannelOverride>,
