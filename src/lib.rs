@@ -1321,6 +1321,9 @@ pub const RAID_WINDOW_SECS: u64 = 30;
 /// The longest slow mode a channel can have, in seconds. Zero turns it off.
 pub const MAX_SLOW_MODE_SECS: u64 = 6 * 60 * 60;
 
+/// The longest a moderator can time a member out for, in seconds (28 days).
+pub const MAX_MEMBER_TIMEOUT_SECS: u64 = 28 * 24 * 60 * 60;
+
 /// The members and roles `text` mentions, counted once each. A mention is `@` followed by a name
 /// that ends the word, as the client shows them.
 pub fn mentioned_count(text: &str, members: &[String], roles: &[String]) -> usize {
@@ -1648,6 +1651,8 @@ pub mod perm {
     pub const BAN_MEMBERS: u32 = 1 << 10;
     /// Send messages in a channel with slow mode without waiting between them. Manage messages there also allows it.
     pub const BYPASS_SLOW_MODE: u32 = 1 << 11;
+    /// Stop members from sending messages for a set time. Only members whose highest role is below one's own.
+    pub const TIMEOUT_MEMBERS: u32 = 1 << 12;
     /// Every permission there is.
     pub const ALL: u32 = MANAGE_CHANNELS
         | MANAGE_ROLES
@@ -1660,7 +1665,8 @@ pub mod perm {
         | PIN_MESSAGES
         | KICK_MEMBERS
         | BAN_MEMBERS
-        | BYPASS_SLOW_MODE;
+        | BYPASS_SLOW_MODE
+        | TIMEOUT_MEMBERS;
 }
 
 /// Who a setting is for is decided by the caller. This picks the outcome for one permission: a member's
@@ -1936,6 +1942,10 @@ pub enum ClientMsg {
     Ban { user: String, reason: Option<String> },
     /// Let a banned account join again. Needs Ban Members.
     Unban { user: String },
+    /// Stop a member from sending messages for `seconds`. `reason` is optional. Needs Timeout Members.
+    Timeout { user: String, seconds: u64, reason: Option<String> },
+    /// End a member's timeout early. Needs Timeout Members.
+    RemoveTimeout { user: String },
     /// Ask for the server's bans. Needs Ban Members. Answered with `ServerMsg::Bans`.
     GetBans,
     /// Replace the server's automatic moderation rules. Needs Manage Server.
@@ -2299,6 +2309,10 @@ pub enum ServerMsg {
     /// A member was removed from the server (kicked, or banned). Sent to everyone connected, and the member
     /// removed is told last and disconnected.
     Removed { user: String, banned: bool, reason: String },
+    /// A member was timed out until `until` (Unix seconds). Sent to everyone connected.
+    TimedOut { user: String, until: u64, reason: String },
+    /// A member's timeout was ended early. Sent to everyone connected.
+    TimeoutEnded { user: String },
     /// The account left this server, so it is not let back in until it asks to join again. Sent before the
     /// server closes the connection.
     NotJoined,
