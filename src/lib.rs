@@ -84,6 +84,18 @@ pub enum AuthRequest {
     Locate {
         id: String,
     },
+    /// A chat server reports each member's mention total on it, so the auth service can show a count on the
+    /// server's icon while the member is elsewhere. The server connects with its own certificate (see
+    /// `tls::connect_async_with_identity`). The first certificate reported for a server is the one trusted after
+    /// it. Replies `MentionsRecorded`.
+    ReportMentions {
+        server_id: String,
+        totals: Vec<MentionTotal>,
+    },
+    /// Ask for the account's mention totals on each server that reported them. Needs a valid session.
+    MentionTotals {
+        token: String,
+    },
     /// Ask for an account's public profile card, by its id. Needs no session.
     /// `token` is the viewer's session, when there is one. With it the card lists the servers the viewer
     /// and the member share.
@@ -253,6 +265,12 @@ pub enum AuthReply {
     },
     /// A sighting was recorded.
     Recorded,
+    /// The mention totals were recorded.
+    MentionsRecorded,
+    /// The account's mention totals on each server that reported them.
+    MentionTotals {
+        totals: Vec<ServerMentions>,
+    },
     /// The Discord page to open, and the state to poll with.
     DiscordUrl {
         url: String,
@@ -2162,6 +2180,20 @@ pub enum ClientMsg {
         #[serde(default)]
         manage_messages: Option<bool>,
     },
+}
+
+/// A member's mentions on one server: the unread messages that ping them, across its channels.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MentionTotal {
+    pub account: String,
+    pub total: u32,
+}
+
+/// A server's mention total for one account, as the auth service holds it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServerMentions {
+    pub server_id: String,
+    pub total: u32,
 }
 
 /// What a member has not read in one channel: the messages since they last read it, and how many of those ping them.
