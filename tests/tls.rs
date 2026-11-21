@@ -50,3 +50,39 @@ fn client_reads_server_fingerprint_and_pins_it() {
     assert_eq!(check_pin(Some(&seen), &seen), Ok(false));
     assert!(check_pin(Some(&seen), "someone-else").is_err());
 }
+
+#[test]
+fn a_server_presenting_its_certificate_is_known_to_the_auth_side() {
+    use common::tls::{acceptor_with_client_certs, connect_async, connect_async_with_identity, peer_fingerprint};
+    let (auth_cert, auth_key) = new_identity().unwrap();
+    let (server_cert, server_key) = new_identity().unwrap();
+    let server_fingerprint = fingerprint(&CertificateDer::from_pem_slice(server_cert.as_bytes()).unwrap());
+    let acceptor = acceptor_with_client_certs(&auth_cert, &auth_key).unwrap();
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let listener = runtime.block_on(tokio::net::TcpListener::bind("127.0.0.1:0")).unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    let (seen_tx, seen_rx) = std::sync::mpsc::channel();
+    runtime.spawn(async move {
+        loop {
+            let Ok((socket, _)) = listener.accept().await else {
+                break;
+            };
+            let acceptor = acceptor.clone();
+            let seen_tx = seen_tx.clone();
+            tokio::spawn(async move {
+                if let Ok(tls) = acceptor.accept(socket).await {
+                    let _ = seen_tx.send(peer_fingerprint(&tls));
+                }
+            });
+        }
+    });
+
+    // A server presents its certificate: the auth side learns its fingerprint.
+    let (_stream, _) = runtime.block_on(connect_async_with_identity(&addr, &server_cert, &server_key)).unwrap();
+    assert_eq!(seen_rx.recv().unwrap(), Some(server_fingerprint));
+
+    // A person's client presents no certificate, and is still let in.
+    let (_stream, _) = runtime.block_on(connect_async(&addr)).unwrap();
+    assert_eq!(seen_rx.recv().unwrap(), None);
+}

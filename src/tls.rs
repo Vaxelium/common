@@ -41,6 +41,89 @@ pub fn acceptor(cert_pem: &str, key_pem: &str) -> anyhow::Result<TlsAcceptor> {
     Ok(TlsAcceptor::from(Arc::new(config)))
 }
 
+/// A certificate and key, as PEM, parsed for rustls.
+type Identity = (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>);
+
+fn parse_identity(cert_pem: &str, key_pem: &str) -> anyhow::Result<Identity> {
+    use rustls::pki_types::pem::PemObject;
+    let certs = CertificateDer::pem_slice_iter(cert_pem.as_bytes()).collect::<Result<Vec<_>, _>>()?;
+    let key = PrivateKeyDer::from_pem_slice(key_pem.as_bytes())?;
+    Ok((certs, key))
+}
+
+/// Accepts any client certificate, and does not require one. A chat server presents its own certificate, so the
+/// auth service can tell which server is reporting; a person's client presents none, and is still let in.
+#[derive(Debug)]
+struct AnyClient {
+    algorithms: rustls::crypto::WebPkiSupportedAlgorithms,
+}
+
+impl rustls::server::danger::ClientCertVerifier for AnyClient {
+    fn offer_client_auth(&self) -> bool {
+        true
+    }
+
+    fn client_auth_mandatory(&self) -> bool {
+        false
+    }
+
+    fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
+        &[]
+    }
+
+    fn verify_client_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _now: UnixTime,
+    ) -> Result<rustls::server::danger::ClientCertVerified, rustls::Error> {
+        Ok(rustls::server::danger::ClientCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls12_signature(message, cert, dss, &self.algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        verify_tls13_signature(message, cert, dss, &self.algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.algorithms.supported_schemes()
+    }
+}
+
+/// The acceptor for the auth service: it asks each connection for a client certificate without requiring one.
+pub fn acceptor_with_client_certs(cert_pem: &str, key_pem: &str) -> anyhow::Result<TlsAcceptor> {
+    let (certs, key) = parse_identity(cert_pem, key_pem)?;
+    let provider = CryptoProvider::get_default()
+        .cloned()
+        .unwrap_or_else(|| Arc::new(rustls::crypto::ring::default_provider()));
+    let verifier = AnyClient {
+        algorithms: provider.signature_verification_algorithms,
+    };
+    let config = rustls::ServerConfig::builder()
+        .with_client_cert_verifier(Arc::new(verifier))
+        .with_single_cert(certs, key)?;
+    Ok(TlsAcceptor::from(Arc::new(config)))
+}
+
+/// The fingerprint of the certificate a client presented on this connection, if it presented one.
+pub fn peer_fingerprint<S>(stream: &AsyncServerStream<S>) -> Option<String> {
+    let (_, connection) = stream.get_ref();
+    connection.peer_certificates()?.first().map(fingerprint)
+}
+
 /// SHA-256 of a certificate, written as hex. This is what clients remember.
 pub fn fingerprint(cert: &CertificateDer<'_>) -> String {
     Sha256::digest(cert.as_ref())
@@ -105,7 +188,7 @@ impl ServerCertVerifier for Tofu {
 }
 
 /// A client configuration that records the server's certificate fingerprint in `seen`.
-fn client_config(seen: Arc<Mutex<Option<String>>>) -> anyhow::Result<Arc<ClientConfig>> {
+fn client_config(seen: Arc<Mutex<Option<String>>>, identity: Option<Identity>) -> anyhow::Result<Arc<ClientConfig>> {
     let provider = CryptoProvider::get_default()
         .cloned()
         .unwrap_or_else(|| Arc::new(rustls::crypto::ring::default_provider()));
@@ -113,10 +196,13 @@ fn client_config(seen: Arc<Mutex<Option<String>>>) -> anyhow::Result<Arc<ClientC
         seen,
         algorithms: provider.signature_verification_algorithms,
     };
-    let config = ClientConfig::builder()
+    let builder = ClientConfig::builder()
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(verifier))
-        .with_no_client_auth();
+        .with_custom_certificate_verifier(Arc::new(verifier));
+    let config = match identity {
+        Some((certs, key)) => builder.with_client_auth_cert(certs, key)?,
+        None => builder.with_no_client_auth(),
+    };
     Ok(Arc::new(config))
 }
 
@@ -138,7 +224,7 @@ pub fn connect_blocking(
     tcp.set_write_timeout(Some(timeout))?;
 
     let seen = Arc::new(Mutex::new(None));
-    let config = client_config(seen.clone()).map_err(Error::other)?;
+    let config = client_config(seen.clone(), None).map_err(Error::other)?;
     let name = ServerName::try_from(CERT_NAME).map_err(Error::other)?;
     let mut conn = ClientConnection::new(config, name).map_err(Error::other)?;
     conn.complete_io(&mut tcp)
@@ -154,8 +240,25 @@ pub fn connect_blocking(
 /// The async version of `connect_blocking`, for the chat server talking to the auth service
 /// and to other servers.
 pub async fn connect_async(addr: &str) -> anyhow::Result<(AsyncClientStream<AsyncTcpStream>, String)> {
+    connect_async_as(addr, None).await
+}
+
+/// `connect_async`, presenting `identity` (a certificate and key, as PEM) as the client certificate, so the
+/// other side knows who is connecting. A chat server uses its own certificate when it reports to the auth service.
+pub async fn connect_async_with_identity(
+    addr: &str,
+    cert_pem: &str,
+    key_pem: &str,
+) -> anyhow::Result<(AsyncClientStream<AsyncTcpStream>, String)> {
+    connect_async_as(addr, Some(parse_identity(cert_pem, key_pem)?)).await
+}
+
+async fn connect_async_as(
+    addr: &str,
+    identity: Option<Identity>,
+) -> anyhow::Result<(AsyncClientStream<AsyncTcpStream>, String)> {
     let seen = Arc::new(Mutex::new(None));
-    let config = client_config(seen.clone())?;
+    let config = client_config(seen.clone(), identity)?;
     let connector = tokio_rustls::TlsConnector::from(config);
     let tcp = AsyncTcpStream::connect(addr).await?;
     let name = ServerName::try_from(CERT_NAME)?;
