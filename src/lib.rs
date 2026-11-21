@@ -1324,6 +1324,68 @@ pub const MAX_SLOW_MODE_SECS: u64 = 6 * 60 * 60;
 /// The longest a moderator can time a member out for, in seconds (28 days).
 pub const MAX_MEMBER_TIMEOUT_SECS: u64 = 28 * 24 * 60 * 60;
 
+/// Whether `text` mentions everyone (`@everyone`) or the members who are online (`@here`), as a word of its own.
+/// `@here` reaches the same people for now: everyone who is connected to the channel, which is online.
+pub fn everyone_mentioned(text: &str) -> bool {
+    fn word_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_'
+    }
+    ["@everyone", "@here"].iter().any(|token| {
+        text.match_indices(token).any(|(at, _)| {
+            let before = text[..at].chars().next_back();
+            let after = text[at + token.len()..].chars().next();
+            !before.is_some_and(word_char) && !after.is_some_and(word_char)
+        })
+    })
+}
+
+/// Whether `text` pings a role or member called `name`: `@name`, not run on into more of a name.
+pub fn mentions_name(text: &str, name: &str) -> bool {
+    let needle = format!("@{name}");
+    let mut from = 0;
+    while let Some(at) = text[from..].find(&needle) {
+        let end = from + at + needle.len();
+        let next = text[end..].chars().next();
+        if !next.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '-') {
+            return true;
+        }
+        from = end;
+    }
+    false
+}
+
+/// Whether a message pings someone who holds these roles: `@everyone` or `@here`, or the name of one of their
+/// roles (`held_roles` are the names of the mentionable roles they hold).
+pub fn pings_viewer(text: &str, held_roles: &[String]) -> bool {
+    everyone_mentioned(text) || held_roles.iter().any(|name| mentions_name(text, name))
+}
+
+#[cfg(test)]
+mod everyone_tests {
+    use super::everyone_mentioned;
+
+    #[test]
+    fn everyone_and_here_count_only_as_words_of_their_own() {
+        assert!(everyone_mentioned("hey @everyone look"));
+        assert!(everyone_mentioned("@here"));
+        assert!(everyone_mentioned("(@everyone)"));
+        assert!(!everyone_mentioned("@everyones"), "a longer word is not the mention");
+        assert!(!everyone_mentioned("x@everyone"), "a word that ends before the @ is not the mention");
+        assert!(!everyone_mentioned("everyone here"), "no @ is not a mention");
+    }
+
+    #[test]
+    fn a_viewer_is_pinged_by_everyone_or_by_a_role_they_hold() {
+        use super::{mentions_name, pings_viewer};
+        assert!(mentions_name("hey @Mods look", "Mods"));
+        assert!(!mentions_name("hey @Mods-extra", "Mods"), "a longer name is not the mention");
+        let held = vec!["Mods".to_string()];
+        assert!(pings_viewer("@Mods", &held));
+        assert!(pings_viewer("@here", &[]), "@here pings everyone");
+        assert!(!pings_viewer("@Admins", &held), "a role they do not hold does not ping them");
+    }
+}
+
 /// The members and roles `text` mentions, counted once each. A mention is `@` followed by a name
 /// that ends the word, as the client shows them.
 pub fn mentioned_count(text: &str, members: &[String], roles: &[String]) -> usize {
@@ -1653,6 +1715,8 @@ pub mod perm {
     pub const BYPASS_SLOW_MODE: u32 = 1 << 11;
     /// Stop members from sending messages for a set time. Only members whose highest role is below one's own.
     pub const TIMEOUT_MEMBERS: u32 = 1 << 12;
+    /// Use `@everyone` and `@here` in a message, which notify everyone who can see the channel.
+    pub const MENTION_EVERYONE: u32 = 1 << 13;
     /// Every permission there is.
     pub const ALL: u32 = MANAGE_CHANNELS
         | MANAGE_ROLES
@@ -1666,7 +1730,8 @@ pub mod perm {
         | KICK_MEMBERS
         | BAN_MEMBERS
         | BYPASS_SLOW_MODE
-        | TIMEOUT_MEMBERS;
+        | TIMEOUT_MEMBERS
+        | MENTION_EVERYONE;
 }
 
 /// Who a setting is for is decided by the caller. This picks the outcome for one permission: a member's
@@ -1946,6 +2011,8 @@ pub enum ClientMsg {
     Timeout { user: String, seconds: u64, reason: Option<String> },
     /// End a member's timeout early. Needs Timeout Members.
     RemoveTimeout { user: String },
+    /// The viewer has read a channel up to its newest message, so what came before is no longer unread.
+    MarkRead { channel_id: i64 },
     /// Ask for the server's bans. Needs Ban Members. Answered with `ServerMsg::Bans`.
     GetBans,
     /// Replace the server's automatic moderation rules. Needs Manage Server.
@@ -2092,6 +2159,14 @@ pub enum ClientMsg {
         #[serde(default)]
         manage_messages: Option<bool>,
     },
+}
+
+/// What a member has not read in one channel: the messages since they last read it, and how many of those ping them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnreadCount {
+    pub channel_id: i64,
+    pub unread: u32,
+    pub mentions: u32,
 }
 
 /// A channel's slow mode: the seconds a member must wait between their messages in it. Channels
@@ -2386,6 +2461,9 @@ pub enum ServerMsg {
     },
     /// Every channel that has slow mode. Sent on connect and after every change to it.
     SlowModes { modes: Vec<SlowMode> },
+    /// What the viewer has not read in each channel, as of connecting. Only channels they have read before are
+    /// counted, and only channels with something unread are listed.
+    Unread { counts: Vec<UnreadCount> },
     /// Every channel's exceptions for roles. Sent on connect and after every change to them.
     ChannelOverrides {
         overrides: Vec<ChannelOverride>,
@@ -2399,9 +2477,10 @@ pub enum ServerMsg {
         channels: Vec<MemberChannelOverride>,
         categories: Vec<MemberCategoryOverride>,
     },
-    /// A new message arrived in a channel other than the one you are viewing.
+    /// A new message arrived in a channel other than the one you are viewing. It comes with its content, so the
+    /// client can count a mention and raise a notification; only members who may view the channel are sent it.
     Activity {
-        channel_id: i64,
+        message: ChatMessage,
     },
     Error {
         text: String,
