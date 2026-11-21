@@ -1717,6 +1717,8 @@ pub mod perm {
     pub const TIMEOUT_MEMBERS: u32 = 1 << 12;
     /// Use `@everyone` and `@here` in a message, which notify everyone who can see the channel.
     pub const MENTION_EVERYONE: u32 = 1 << 13;
+    /// Mention as many members and roles as one likes, past AutoMod's mention limit.
+    pub const BYPASS_MENTION_LIMIT: u32 = 1 << 14;
     /// Every permission there is.
     pub const ALL: u32 = MANAGE_CHANNELS
         | MANAGE_ROLES
@@ -1731,7 +1733,8 @@ pub mod perm {
         | BAN_MEMBERS
         | BYPASS_SLOW_MODE
         | TIMEOUT_MEMBERS
-        | MENTION_EVERYONE;
+        | MENTION_EVERYONE
+        | BYPASS_MENTION_LIMIT;
 }
 
 /// Who a setting is for is decided by the caller. This picks the outcome for one permission: a member's
