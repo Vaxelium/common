@@ -2069,6 +2069,9 @@ pub enum ClientMsg {
     React { id: i64, emoji: String },
     /// Request the list of channels.
     ListChannels,
+    /// Ask for the server-wide state again: roles, badges, custom emoji, and channel and category
+    /// overrides. The server sends them all again, so a client that missed a change shows it.
+    Resync,
     /// End this connection's session on this server, so its token stops working here even if
     /// the auth service cannot be reached. The server then closes the connection.
     Logout,
