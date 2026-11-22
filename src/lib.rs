@@ -2551,7 +2551,7 @@ pub enum ServerMsg {
         id: i64,
         reactions: Vec<Reaction>,
     },
-    /// A poll in `channel` has new votes. Sent to everyone who can see the channel.
+    /// A poll in `channel` has new votes. Sent to the connections that have that channel open, as reactions are.
     PollVoted {
         channel_id: i64,
         id: i64,
