@@ -316,7 +316,18 @@ pub const QUICK_REACTIONS: [&str; 3] = ["👍", "❤️", "😂"];
 
 /// True for a reaction the server accepts: any emoji, as a short run of visible characters.
 pub fn is_reaction(emoji: &str) -> bool {
-    !emoji.is_empty() && emoji.chars().count() <= 16 && emoji.chars().all(|c| !c.is_control() && !c.is_whitespace())
+    // A custom emoji's reaction is its name in colons, which can be longer than a picture emoji.
+    let longest = if custom_emoji_name(emoji).is_some() { 34 } else { 16 };
+    !emoji.is_empty() && emoji.chars().count() <= longest && emoji.chars().all(|c| !c.is_control() && !c.is_whitespace())
+}
+
+/// The name of a custom emoji, when `emoji` is one written as `:name:` (see `CustomEmoji`). None for any
+/// other reaction, such as a picture emoji.
+pub fn custom_emoji_name(emoji: &str) -> Option<&str> {
+    let name = emoji.strip_prefix(':')?.strip_suffix(':')?;
+    let valid = (2..=32).contains(&name.chars().count())
+        && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    valid.then_some(name)
 }
 /// One emoji on a message, and who reacted with it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1737,6 +1748,8 @@ pub mod perm {
     pub const MENTION_EVERYONE: u32 = 1 << 13;
     /// Mention as many members and roles as one likes, past AutoMod's mention limit.
     pub const BYPASS_MENTION_LIMIT: u32 = 1 << 14;
+    /// Add and remove the server's custom emoji.
+    pub const MANAGE_EMOJI: u32 = 1 << 15;
     /// Every permission there is.
     pub const ALL: u32 = MANAGE_CHANNELS
         | MANAGE_ROLES
@@ -1752,7 +1765,8 @@ pub mod perm {
         | BYPASS_SLOW_MODE
         | TIMEOUT_MEMBERS
         | MENTION_EVERYONE
-        | BYPASS_MENTION_LIMIT;
+        | BYPASS_MENTION_LIMIT
+        | MANAGE_EMOJI;
 }
 
 /// Who a setting is for is decided by the caller. This picks the outcome for one permission: a member's
@@ -1944,6 +1958,16 @@ pub struct Badge {
     pub color: String,
 }
 
+/// A custom emoji of this server. Only members of the server can use it, in its messages and reactions.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CustomEmoji {
+    pub id: i64,
+    /// Its name, without colons: `party` is used as `:party:`.
+    pub name: String,
+    /// The image as base64: a PNG, or an animated PNG.
+    pub image: String,
+}
+
 /// A role members can be given. Members get the permissions of all their roles together.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RoleInfo {
@@ -2111,6 +2135,10 @@ pub enum ClientMsg {
     /// Give a member a role, or take it away with `on` false. Needs Manage roles, and both the role
     /// and the member's highest role must be below the sender's highest role.
     SetMemberRole { user: String, role: i64, on: bool },
+    /// Add a custom emoji to this server. `image` is base64 for a PNG or animated PNG. Needs Manage emoji.
+    AddEmoji { name: String, image: String },
+    /// Remove a custom emoji. Needs Manage emoji.
+    RemoveEmoji { emoji: i64 },
     /// Create a badge on this server, shown on members' profile cards. Needs Manage roles.
     CreateBadge { name: String, color: String },
     /// Delete a badge. Members who had it lose it. Needs Manage roles.
@@ -2481,6 +2509,10 @@ pub enum ServerMsg {
     Badges {
         badges: Vec<Badge>,
     },
+    /// The custom emoji of this server. Sent on connect and after every change to them.
+    CustomEmoji {
+        emoji: Vec<CustomEmoji>,
+    },
     /// Someone else is typing in a channel. Only sent to members who may view it.
     Typing {
         channel_id: i64,
@@ -2528,3 +2560,25 @@ pub enum ServerMsg {
 #[cfg(test)]
 #[path = "tests/automod.rs"]
 mod automod_tests;
+
+#[cfg(test)]
+mod custom_reaction_tests {
+    use super::*;
+
+    #[test]
+    fn a_custom_emoji_reaction_is_its_name_in_colons() {
+        assert_eq!(custom_emoji_name(":party:"), Some("party"));
+        assert_eq!(custom_emoji_name(":cat_2:"), Some("cat_2"));
+        assert_eq!(custom_emoji_name("party"), None, "no colons");
+        assert_eq!(custom_emoji_name(":Party:"), None, "capitals are not allowed");
+        assert_eq!(custom_emoji_name("👍"), None, "a picture emoji is not custom");
+        assert_eq!(custom_emoji_name(":a:"), None, "too short");
+    }
+
+    #[test]
+    fn a_custom_emoji_reaction_may_be_longer_than_a_picture_emoji() {
+        let long = format!(":{}:", "a".repeat(32));
+        assert!(is_reaction(&long));
+        assert!(!is_reaction(&"a".repeat(17)), "a picture-style reaction stays short");
+    }
+}
