@@ -402,6 +402,23 @@ pub struct ChatMessage {
     pub poll: Option<Poll>,
 }
 
+/// A message a member has scheduled, to be posted later to a channel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScheduledMessage {
+    pub id: i64,
+    pub channel_id: i64,
+    pub text: String,
+    /// Unix timestamp in seconds when the message is posted.
+    pub send_at: u64,
+}
+
+/// The soonest a message may be scheduled: a minute from now.
+pub const SCHEDULE_MIN_LEAD_SECS: u64 = 60;
+/// The furthest ahead a message may be scheduled: 30 days.
+pub const SCHEDULE_MAX_AHEAD_SECS: u64 = 30 * 24 * 60 * 60;
+/// How many messages one member may have scheduled on a server at once.
+pub const MAX_SCHEDULED_PER_MEMBER: usize = 25;
+
 /// Most options a poll may have.
 pub const MAX_POLL_OPTIONS: usize = 10;
 /// Fewest options a poll may have.
@@ -1838,6 +1855,8 @@ pub mod perm {
     pub const BYPASS_MENTION_LIMIT: u32 = 1 << 14;
     /// Add and remove the server's custom emoji.
     pub const MANAGE_EMOJI: u32 = 1 << 15;
+    /// Create polls in a channel. Anyone may still vote.
+    pub const MANAGE_POLLS: u32 = 1 << 16;
     /// Every permission there is.
     pub const ALL: u32 = MANAGE_CHANNELS
         | MANAGE_ROLES
@@ -1854,7 +1873,8 @@ pub mod perm {
         | TIMEOUT_MEMBERS
         | MENTION_EVERYONE
         | BYPASS_MENTION_LIMIT
-        | MANAGE_EMOJI;
+        | MANAGE_EMOJI
+        | MANAGE_POLLS;
 }
 
 /// Who a setting is for is decided by the caller. This picks the outcome for one permission: a member's
@@ -2162,6 +2182,17 @@ pub enum ClientMsg {
     Vote { id: i64, option: usize },
     /// Request the list of channels.
     ListChannels,
+    /// Post a message to the current channel at a later time. The time is a Unix timestamp in seconds, and
+    /// must be at least `SCHEDULE_MIN_LEAD_SECS` ahead and at most `SCHEDULE_MAX_AHEAD_SECS`. Answered with
+    /// `Scheduled`, the member's list.
+    ScheduleMessage { text: String, send_at: u64 },
+    /// Ask for the messages you have scheduled on this server. Answered with `Scheduled`.
+    ListScheduled,
+    /// Cancel one of your scheduled messages so it is never posted. Answered with `Scheduled`.
+    CancelScheduled { id: i64 },
+    /// Change the text and time of one of your scheduled messages. It stays in its channel. The time has the
+    /// same limits as `ScheduleMessage`. Answered with `Scheduled`.
+    UpdateScheduled { id: i64, text: String, send_at: u64 },
     /// Ask for the server-wide state again: roles, badges, custom emoji, and channel and category
     /// overrides. The server sends them all again, so a client that missed a change shows it.
     Resync,
@@ -2571,6 +2602,8 @@ pub enum ServerMsg {
         id: i64,
         reactions: Vec<Reaction>,
     },
+    /// The messages this member has scheduled on the server, soonest first.
+    Scheduled { messages: Vec<ScheduledMessage> },
     /// A poll in `channel` has new votes. Sent to the connections that have that channel open, as reactions are.
     PollVoted {
         channel_id: i64,
