@@ -408,6 +408,8 @@ pub const MAX_POLL_OPTIONS: usize = 10;
 pub const MIN_POLL_OPTIONS: usize = 2;
 /// Longest an option may be, in characters.
 pub const MAX_POLL_OPTION_LEN: usize = 60;
+/// Longest a poll's question may be, in characters.
+pub const MAX_POLL_QUESTION_LEN: usize = 300;
 /// Shortest and longest that voting may last, in seconds.
 pub const POLL_MIN_SECS: u64 = 5 * 60;
 pub const POLL_MAX_SECS: u64 = 14 * 24 * 60 * 60;
@@ -418,9 +420,12 @@ pub struct Poll {
     pub options: Vec<PollOption>,
     /// Unix timestamp in seconds when voting ends. Votes after this are refused.
     pub ends: u64,
+    /// Whether a member may choose several options. Otherwise a new choice replaces the one before.
+    #[serde(default)]
+    pub multiple: bool,
 }
 
-/// One choice of a poll, with the account ids of the members who chose it. Each member chooses one option.
+/// One choice of a poll, with the account ids of the members who chose it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PollOption {
     pub text: String,
@@ -433,6 +438,21 @@ pub struct PollOption {
 pub struct PollDraft {
     pub options: Vec<String>,
     pub duration_secs: u64,
+    /// Whether a member may choose several options.
+    #[serde(default)]
+    pub multiple: bool,
+}
+
+/// Checks a poll's question, which is the message's text: it must not be empty and not too long.
+pub fn check_poll_question(question: &str) -> Result<(), String> {
+    let question = question.trim();
+    if question.is_empty() {
+        return Err("A poll needs a question.".into());
+    }
+    if question.chars().count() > MAX_POLL_QUESTION_LEN {
+        return Err(format!("a poll question is at most {MAX_POLL_QUESTION_LEN} characters"));
+    }
+    Ok(())
 }
 
 impl Poll {
@@ -2672,7 +2692,21 @@ mod poll_tests {
     use super::*;
 
     fn draft(options: &[&str], secs: u64) -> PollDraft {
-        PollDraft { options: options.iter().map(|o| o.to_string()).collect(), duration_secs: secs }
+        PollDraft { options: options.iter().map(|o| o.to_string()).collect(), duration_secs: secs, multiple: false }
+    }
+
+    #[test]
+    fn a_question_is_required_and_at_most_three_hundred_characters() {
+        assert!(check_poll_question("  ").is_err());
+        assert!(check_poll_question("Lunch?").is_ok());
+        assert!(check_poll_question(&"x".repeat(MAX_POLL_QUESTION_LEN)).is_ok());
+        assert!(check_poll_question(&"x".repeat(MAX_POLL_QUESTION_LEN + 1)).is_err());
+    }
+
+    #[test]
+    fn a_poll_without_the_multiple_flag_is_single_choice() {
+        let poll: Poll = serde_json::from_str(r#"{"options":[],"ends":5}"#).unwrap();
+        assert!(!poll.multiple);
     }
 
     #[test]
@@ -2701,7 +2735,7 @@ mod poll_tests {
 
     #[test]
     fn a_poll_is_closed_from_its_end_time() {
-        let poll = Poll { options: Vec::new(), ends: 1000 };
+        let poll = Poll { options: Vec::new(), ends: 1000, multiple: false };
         assert!(!poll.closed(999));
         assert!(poll.closed(1000));
     }
