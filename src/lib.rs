@@ -397,6 +397,94 @@ pub struct ChatMessage {
     /// A picture the message shows, as base64 PNG. The server draws it for join notices.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<String>,
+    /// The poll this message is, when it is one. Its text is the question.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poll: Option<Poll>,
+}
+
+/// Most options a poll may have.
+pub const MAX_POLL_OPTIONS: usize = 10;
+/// Fewest options a poll may have.
+pub const MIN_POLL_OPTIONS: usize = 2;
+/// Longest an option may be, in characters.
+pub const MAX_POLL_OPTION_LEN: usize = 60;
+/// Longest a poll's question may be, in characters.
+pub const MAX_POLL_QUESTION_LEN: usize = 300;
+/// Shortest and longest that voting may last, in seconds.
+pub const POLL_MIN_SECS: u64 = 5 * 60;
+pub const POLL_MAX_SECS: u64 = 14 * 24 * 60 * 60;
+
+/// A poll: its options, who chose each, and when voting ends. The question is the message's text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Poll {
+    pub options: Vec<PollOption>,
+    /// Unix timestamp in seconds when voting ends. Votes after this are refused.
+    pub ends: u64,
+    /// Whether a member may choose several options. Otherwise a new choice replaces the one before.
+    #[serde(default)]
+    pub multiple: bool,
+}
+
+/// One choice of a poll, with the account ids of the members who chose it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PollOption {
+    pub text: String,
+    #[serde(default)]
+    pub voters: Vec<String>,
+}
+
+/// A poll as a member makes it: the options (without any votes yet) and how long voting lasts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PollDraft {
+    pub options: Vec<String>,
+    pub duration_secs: u64,
+    /// Whether a member may choose several options.
+    #[serde(default)]
+    pub multiple: bool,
+}
+
+/// Checks a poll's question, which is the message's text: it must not be empty and not too long.
+pub fn check_poll_question(question: &str) -> Result<(), String> {
+    let question = question.trim();
+    if question.is_empty() {
+        return Err("A poll needs a question.".into());
+    }
+    if question.chars().count() > MAX_POLL_QUESTION_LEN {
+        return Err(format!("a poll question is at most {MAX_POLL_QUESTION_LEN} characters"));
+    }
+    Ok(())
+}
+
+impl Poll {
+    /// Whether voting has ended by `now` (Unix seconds).
+    pub fn closed(&self, now: u64) -> bool {
+        now >= self.ends
+    }
+}
+
+/// Checks a poll a member wants to make, returning the reason it is refused. Options are trimmed, and
+/// no two may match ignoring case.
+pub fn check_poll_draft(draft: &PollDraft) -> Result<(), String> {
+    if draft.options.len() < MIN_POLL_OPTIONS || draft.options.len() > MAX_POLL_OPTIONS {
+        return Err(format!("a poll needs between {MIN_POLL_OPTIONS} and {MAX_POLL_OPTIONS} options"));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for option in &draft.options {
+        let option = option.trim();
+        if option.is_empty() {
+            return Err("poll options cannot be empty".into());
+        }
+        if option.chars().count() > MAX_POLL_OPTION_LEN {
+            return Err(format!("poll options are at most {MAX_POLL_OPTION_LEN} characters"));
+        }
+        if !seen.insert(option.to_lowercase()) {
+            return Err(format!("the poll option \"{option}\" is listed twice"));
+        }
+    }
+    if !(POLL_MIN_SECS..=POLL_MAX_SECS).contains(&draft.duration_secs) {
+        return Err("a poll lasts between 5 minutes and 14 days".into());
+    }
+    Ok(())
 }
 
 /// The Filtered Words rule: words and phrases a message may not contain, with its own response.
@@ -2025,6 +2113,9 @@ pub enum ClientMsg {
         reply_to: Option<i64>,
         #[serde(default)]
         channel: Option<i64>,
+        /// Makes the message a poll: `text` is its question and this gives the options and how long voting lasts.
+        #[serde(default)]
+        poll: Option<PollDraft>,
     },
     /// Change the text of one of your own messages.
     Edit { id: i64, text: String },
@@ -2067,6 +2158,8 @@ pub enum ClientMsg {
     SetAutoMod { rules: AutoMod },
     /// Add your reaction to a message, or take it off if it is already there.
     React { id: i64, emoji: String },
+    /// Choose an option of a poll, instead of any option you chose before. Refused once voting has ended.
+    Vote { id: i64, option: usize },
     /// Request the list of channels.
     ListChannels,
     /// Ask for the server-wide state again: roles, badges, custom emoji, and channel and category
@@ -2478,6 +2571,12 @@ pub enum ServerMsg {
         id: i64,
         reactions: Vec<Reaction>,
     },
+    /// A poll in `channel` has new votes. Sent to the connections that have that channel open, as reactions are.
+    PollVoted {
+        channel_id: i64,
+        id: i64,
+        poll: Poll,
+    },
     Channels {
         channels: Vec<ChannelRef>,
     },
@@ -2585,5 +2684,59 @@ mod custom_reaction_tests {
         let long = format!(":{}:", "a".repeat(32));
         assert!(is_reaction(&long));
         assert!(!is_reaction(&"a".repeat(17)), "a picture-style reaction stays short");
+    }
+}
+
+#[cfg(test)]
+mod poll_tests {
+    use super::*;
+
+    fn draft(options: &[&str], secs: u64) -> PollDraft {
+        PollDraft { options: options.iter().map(|o| o.to_string()).collect(), duration_secs: secs, multiple: false }
+    }
+
+    #[test]
+    fn a_question_is_required_and_at_most_three_hundred_characters() {
+        assert!(check_poll_question("  ").is_err());
+        assert!(check_poll_question("Lunch?").is_ok());
+        assert!(check_poll_question(&"x".repeat(MAX_POLL_QUESTION_LEN)).is_ok());
+        assert!(check_poll_question(&"x".repeat(MAX_POLL_QUESTION_LEN + 1)).is_err());
+    }
+
+    #[test]
+    fn a_poll_without_the_multiple_flag_is_single_choice() {
+        let poll: Poll = serde_json::from_str(r#"{"options":[],"ends":5}"#).unwrap();
+        assert!(!poll.multiple);
+    }
+
+    #[test]
+    fn a_poll_needs_two_to_ten_options() {
+        assert!(check_poll_draft(&draft(&["yes", "no"], POLL_MIN_SECS)).is_ok());
+        assert!(check_poll_draft(&draft(&["only"], POLL_MIN_SECS)).is_err());
+        let eleven: Vec<String> = (0..11).map(|i| format!("option {i}")).collect();
+        let refs: Vec<&str> = eleven.iter().map(String::as_str).collect();
+        assert!(check_poll_draft(&draft(&refs, POLL_MIN_SECS)).is_err());
+    }
+
+    #[test]
+    fn options_are_not_empty_not_too_long_and_not_repeated() {
+        assert!(check_poll_draft(&draft(&["yes", "  "], POLL_MIN_SECS)).is_err());
+        let long = "x".repeat(MAX_POLL_OPTION_LEN + 1);
+        assert!(check_poll_draft(&draft(&["yes", &long], POLL_MIN_SECS)).is_err());
+        assert!(check_poll_draft(&draft(&["Yes", "yes "], POLL_MIN_SECS)).is_err(), "the same option twice is refused");
+    }
+
+    #[test]
+    fn voting_lasts_between_five_minutes_and_fourteen_days() {
+        assert!(check_poll_draft(&draft(&["a", "b"], POLL_MIN_SECS - 1)).is_err());
+        assert!(check_poll_draft(&draft(&["a", "b"], POLL_MAX_SECS + 1)).is_err());
+        assert!(check_poll_draft(&draft(&["a", "b"], POLL_MAX_SECS)).is_ok());
+    }
+
+    #[test]
+    fn a_poll_is_closed_from_its_end_time() {
+        let poll = Poll { options: Vec::new(), ends: 1000, multiple: false };
+        assert!(!poll.closed(999));
+        assert!(poll.closed(1000));
     }
 }
