@@ -1993,11 +1993,14 @@ pub enum ClientMsg {
     },
     /// Switch to a channel (created on demand). Receives its history.
     Join { channel: String },
-    /// Send a message to the current channel, as a reply to the message `reply_to` when it is set.
+    /// Send a message to the current channel, as a reply to the message `reply_to` when it is set. When `channel`
+    /// is set, the message goes to that channel instead, and the current channel does not change.
     Say {
         text: String,
         #[serde(default)]
         reply_to: Option<i64>,
+        #[serde(default)]
+        channel: Option<i64>,
     },
     /// Change the text of one of your own messages.
     Edit { id: i64, text: String },
