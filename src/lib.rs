@@ -2139,6 +2139,8 @@ pub enum ClientMsg {
     AddEmoji { name: String, image: String },
     /// Remove a custom emoji. Needs Manage emoji.
     RemoveEmoji { emoji: i64 },
+    /// Rename a custom emoji. Reactions that used its old name show the new one. Needs Manage emoji.
+    RenameEmoji { emoji: i64, name: String },
     /// Create a badge on this server, shown on members' profile cards. Needs Manage roles.
     CreateBadge { name: String, color: String },
     /// Delete a badge. Members who had it lose it. Needs Manage roles.
