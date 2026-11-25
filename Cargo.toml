@@ -7,6 +7,7 @@ edition = "2021"
 anyhow = "1.0.104"
 serde = { version = "1", features = ["derive"] }
 regex = "1"
+base64 = "0.22"
 
 # TLS and sockets, for the native builds only: the web client talks over the browser's WebSocket.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

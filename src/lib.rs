@@ -400,6 +400,68 @@ pub struct ChatMessage {
     /// The poll this message is, when it is one. Its text is the question.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poll: Option<Poll>,
+    /// The file the message carries, when it has one. Its contents are fetched with `ClientMsg::GetAttachment`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attachment: Option<Attachment>,
+}
+
+/// Largest file a message can carry, in bytes, before base64 encoding.
+pub const MAX_ATTACHMENT_BYTES: usize = 8 * 1024 * 1024;
+/// Longest file name kept, in characters. Longer names are cut short.
+pub const MAX_ATTACHMENT_NAME_LEN: usize = 120;
+
+/// The file a message carries: its name, what kind of file the server found it to be, and its size.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attachment {
+    pub name: String,
+    /// The type the server worked out from the file's contents, such as `image/png`.
+    pub mime: String,
+    /// Size in bytes.
+    pub size: u64,
+}
+
+/// A file a member is sending with a message. `data` is the file as base64.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachmentDraft {
+    pub name: String,
+    pub data: String,
+}
+
+/// Whether the app shows a file of this type as a picture in the chat, rather than as a download.
+pub fn can_preview(mime: &str) -> bool {
+    matches!(mime, "image/png" | "image/jpeg" | "image/gif" | "image/webp")
+}
+
+/// The type of a file, worked out from its first bytes. Anything not recognised is `application/octet-stream`.
+pub fn sniff_mime(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        "image/png"
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "image/jpeg"
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        "image/gif"
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else if bytes.starts_with(b"%PDF-") {
+        "application/pdf"
+    } else if bytes.starts_with(b"PK\x03\x04") {
+        "application/zip"
+    } else {
+        "application/octet-stream"
+    }
+}
+
+/// A file name as it is kept: the last part of the path, without control characters, cut to
+/// `MAX_ATTACHMENT_NAME_LEN`. A name that is left empty becomes `file`.
+pub fn attachment_file_name(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
+    let clean: String = base
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_ATTACHMENT_NAME_LEN)
+        .collect();
+    let clean = clean.trim();
+    if clean.is_empty() { "file".to_string() } else { clean.to_string() }
 }
 
 /// A message a member has scheduled, to be posted later to a channel.
@@ -570,6 +632,37 @@ impl Default for SystemMessages {
         Self {
             connect_notice: true,
             channel_id: None,
+        }
+    }
+}
+
+/// The file sizes a server offers for uploads, in megabytes. Nothing larger than `MAX_ATTACHMENT_BYTES` can be sent.
+pub const UPLOAD_SIZES_MB: [u32; 4] = [1, 2, 4, 8];
+
+/// How members may send files with their messages on this server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadSettings {
+    /// Members may send files. On by default.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// The largest file a member may send, in megabytes. One of `UPLOAD_SIZES_MB`.
+    #[serde(default = "default_upload_mb")]
+    pub max_mb: u32,
+    /// Only pictures may be sent: PNG, JPEG, GIF and WebP. Off by default.
+    #[serde(default)]
+    pub images_only: bool,
+}
+
+fn default_upload_mb() -> u32 {
+    8
+}
+
+impl Default for UploadSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_mb: default_upload_mb(),
+            images_only: false,
         }
     }
 }
@@ -2136,6 +2229,9 @@ pub enum ClientMsg {
         /// Makes the message a poll: `text` is its question and this gives the options and how long voting lasts.
         #[serde(default)]
         poll: Option<PollDraft>,
+        /// A file to send with the message. The text may be empty when there is a file.
+        #[serde(default)]
+        attachment: Option<AttachmentDraft>,
     },
     /// Change the text of one of your own messages.
     Edit { id: i64, text: String },
@@ -2160,6 +2256,10 @@ pub enum ClientMsg {
     GetSystemMessages,
     /// Replace the server's system messages settings. Needs Manage Server.
     SetSystemMessages { settings: SystemMessages },
+    /// Ask for the server's file upload settings. Needs Manage Server.
+    GetUploadSettings,
+    /// Replace the server's file upload settings. Needs Manage Server. `max_mb` must be one of `UPLOAD_SIZES_MB`.
+    SetUploadSettings { settings: UploadSettings },
     /// Remove a member from the server. They can join again. Needs Kick Members. `reason` is optional.
     Kick { user: String, reason: Option<String> },
     /// Remove a member and stop them joining until unbanned. Needs Ban Members. `reason` is optional.
@@ -2193,6 +2293,9 @@ pub enum ClientMsg {
     /// Change the text and time of one of your scheduled messages. It stays in its channel. The time has the
     /// same limits as `ScheduleMessage`. Answered with `Scheduled`.
     UpdateScheduled { id: i64, text: String, send_at: u64 },
+    /// Ask for the file a message carries. Needs to be able to view the message's channel. Answered with
+    /// `ServerMsg::Attachment`.
+    GetAttachment { message: i64 },
     /// Ask for the server-wide state again: roles, badges, custom emoji, and channel and category
     /// overrides. The server sends them all again, so a client that missed a change shows it.
     Resync,
@@ -2539,6 +2642,11 @@ pub enum ServerMsg {
     Peers {
         addrs: Vec<String>,
     },
+    /// The file a message carries, as base64, answering `ClientMsg::GetAttachment`.
+    Attachment {
+        message: i64,
+        data: String,
+    },
     Joined {
         channel: ChannelRef,
         history: Vec<ChatMessage>,
@@ -2595,6 +2703,10 @@ pub enum ServerMsg {
     /// The server's system messages settings, for those who may change them.
     SystemMessages {
         settings: SystemMessages,
+    },
+    /// The server's file upload settings, for those who may change them.
+    UploadSettings {
+        settings: UploadSettings,
     },
     /// The reactions on a message in `channel` now look like this.
     Reactions {
@@ -2764,6 +2876,29 @@ mod poll_tests {
         assert!(check_poll_draft(&draft(&["a", "b"], POLL_MIN_SECS - 1)).is_err());
         assert!(check_poll_draft(&draft(&["a", "b"], POLL_MAX_SECS + 1)).is_err());
         assert!(check_poll_draft(&draft(&["a", "b"], POLL_MAX_SECS)).is_ok());
+    }
+
+    #[test]
+    fn a_file_is_named_by_its_last_part_without_control_characters() {
+        assert_eq!(attachment_file_name("C:\\Users\\me\\holiday.png"), "holiday.png");
+        assert_eq!(attachment_file_name("/tmp/a\u{7}b.txt"), "ab.txt");
+        assert_eq!(attachment_file_name("   "), "file");
+        assert_eq!(attachment_file_name("x").len(), 1);
+        let long = "n".repeat(MAX_ATTACHMENT_NAME_LEN + 10);
+        assert_eq!(attachment_file_name(&long).chars().count(), MAX_ATTACHMENT_NAME_LEN);
+    }
+
+    #[test]
+    fn a_file_type_is_found_from_its_contents_not_its_name() {
+        assert_eq!(sniff_mime(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0]), "image/png");
+        assert_eq!(sniff_mime(&[0xFF, 0xD8, 0xFF, 0xE0]), "image/jpeg");
+        assert_eq!(sniff_mime(b"GIF89a...."), "image/gif");
+        assert_eq!(sniff_mime(b"RIFF\0\0\0\0WEBPVP8 "), "image/webp");
+        assert_eq!(sniff_mime(b"%PDF-1.7"), "application/pdf");
+        assert_eq!(sniff_mime(b"just text"), "application/octet-stream");
+        assert!(can_preview("image/png") && can_preview("image/jpeg"));
+        assert!(can_preview("image/gif") && can_preview("image/webp"));
+        assert!(!can_preview("application/pdf") && !can_preview("application/octet-stream"));
     }
 
     #[test]
