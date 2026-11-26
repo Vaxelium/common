@@ -403,6 +403,49 @@ pub struct ChatMessage {
     /// The file the message carries, when it has one. Its contents are fetched with `ClientMsg::GetAttachment`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment: Option<Attachment>,
+    /// A preview of the first link in the message, once the server has fetched it. See `ServerMsg::Embed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embed: Option<LinkEmbed>,
+}
+
+/// Longest title kept for a link preview, in characters.
+pub const MAX_EMBED_TITLE_LEN: usize = 200;
+/// Longest description kept for a link preview, in characters.
+pub const MAX_EMBED_DESCRIPTION_LEN: usize = 300;
+/// Largest picture kept for a link preview, in bytes before base64 encoding.
+pub const MAX_EMBED_IMAGE_BYTES: usize = 512 * 1024;
+
+/// What the server found at a link in a message: the page's title, description, site and picture.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkEmbed {
+    /// The link as the message gave it.
+    pub url: String,
+    /// The site's name, such as the host, or what the page says it is called. Empty when unknown.
+    #[serde(default)]
+    pub site: String,
+    /// The page's title. Empty when none was found.
+    #[serde(default)]
+    pub title: String,
+    /// The page's description. Empty when none was found.
+    #[serde(default)]
+    pub description: String,
+    /// The page's picture as base64 PNG, JPEG, GIF or WebP, or empty for none.
+    #[serde(default)]
+    pub image: String,
+}
+
+/// The first web link in a message's text, as it was written, or None when there is none. A link ends at a space,
+/// and the punctuation after it (such as a full stop or a closing bracket) is not part of it.
+pub fn first_link(text: &str) -> Option<String> {
+    text.split_whitespace().find_map(|word| {
+        let start = word.find("http://").or_else(|| word.find("https://"))?;
+        let rest = &word[start..];
+        let link = rest.trim_start_matches(['<', '(', '[', '"', '\''])
+            .trim_end_matches(['.', ',', '!', '?', ';', ':', ')', ']', '>', '"', '\'']);
+        let host = link.split("://").nth(1).unwrap_or_default();
+        let host_ok = !host.is_empty() && !host.starts_with('/');
+        (host_ok && link.len() <= 2048).then(|| link.to_string())
+    })
 }
 
 /// Largest file a message can carry, in bytes, before base64 encoding.
@@ -2647,6 +2690,13 @@ pub enum ServerMsg {
         message: i64,
         data: String,
     },
+    /// The link preview of a message in `channel_id`, sent once the server has fetched the first link. Also sent to
+    /// everyone who can see the channel, so their copy of the message gets it.
+    Embed {
+        channel_id: i64,
+        message: i64,
+        embed: LinkEmbed,
+    },
     Joined {
         channel: ChannelRef,
         history: Vec<ChatMessage>,
@@ -2906,5 +2956,26 @@ mod poll_tests {
         let poll = Poll { options: Vec::new(), ends: 1000, multiple: false };
         assert!(!poll.closed(999));
         assert!(poll.closed(1000));
+    }
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::first_link;
+
+    #[test]
+    fn the_first_web_link_is_found_without_the_punctuation_after_it() {
+        assert_eq!(first_link("see https://example.com/a?b=1 now").as_deref(), Some("https://example.com/a?b=1"));
+        assert_eq!(first_link("(http://example.org).").as_deref(), Some("http://example.org"));
+        assert_eq!(first_link("<https://example.net/x>, and more").as_deref(), Some("https://example.net/x"));
+        assert_eq!(first_link("https://a.example https://b.example").as_deref(), Some("https://a.example"));
+    }
+
+    #[test]
+    fn text_without_a_web_link_has_none() {
+        assert_eq!(first_link("no links here"), None);
+        assert_eq!(first_link("ftp://example.com"), None);
+        assert_eq!(first_link("https://"), None);
+        assert_eq!(first_link("https:///path"), None);
     }
 }
